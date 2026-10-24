@@ -44,24 +44,24 @@ export function OnlineCard() {
       <Scrobbling />
 
       <h3 className="sub">Discord</h3>
-      <Toggle k="discord" label="Show what I'm listening to on Discord" hint="Needs the Discord app running on this PC." />
+      <Toggle
+        k="discord"
+        label="Show what I'm listening to on Discord"
+        hint="Your Discord profile shows “Listening to HiFi Player” with the track. Needs the Discord app running on this PC."
+      />
       {o.discord && (
-        <div className="account-row">
-          <b>Application ID</b>
-          <input
-            value={o.discordAppId}
-            placeholder="e.g. 1234567890123456789"
-            onChange={(e) => setO({ ...o, discordAppId: e.target.value.replace(/\D/g, '') })}
-            onBlur={() => save({})}
-          />
-          <button className="link-btn small" onClick={() => open('https://discord.com/developers/applications')}>
-            Create one (free)
-          </button>
-          <div className="muted small" style={{ flexBasis: '100%' }}>
-            Make a new application named “HiFi Player” and copy its Application ID here. Optionally upload an image
-            called <code>logo</code> under Rich Presence → Art Assets.
+        <details className="small" open={!!o.discordAppId}>
+          <summary className="muted">Use my own Discord application (optional)</summary>
+          <div className="account-row">
+            <b>Application ID</b>
+            <input
+              value={o.discordAppId}
+              placeholder="Leave empty to use HiFi Player's"
+              onChange={(e) => setO({ ...o, discordAppId: e.target.value.replace(/\D/g, '') })}
+              onBlur={() => save({})}
+            />
           </div>
-        </div>
+        </details>
       )}
 
       <h3 className="sub">DLNA / UPnP</h3>
@@ -205,6 +205,11 @@ function Scrobbling() {
             </button>
             {!status.lastfmHasKey && (
               <button className="link-btn small" onClick={() => open('https://www.last.fm/api/account/create')}>Get a free API key</button>
+            )}
+            {!status.lastfmHasKey && (
+              <div className="muted small" style={{ flexBasis: '100%' }}>
+                This copy of HiFi Player has no built-in Last.fm key, so use your own (official installers include one).
+              </div>
             )}
           </>
         )}

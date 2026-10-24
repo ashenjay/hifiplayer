@@ -37,6 +37,10 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HiFi Player's Last.fm API account (Settings → Secrets and variables → Actions).
+          # Optional: without them, users enter their own key in the app.
+          HIFI_LASTFM_KEY: ${{ secrets.LASTFM_API_KEY }}
+          HIFI_LASTFM_SECRET: ${{ secrets.LASTFM_API_SECRET }}
         with:
           projectPath: app
           tagName: v${{ inputs.version }}

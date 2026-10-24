@@ -62,7 +62,7 @@ const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
     bio: 'The Eagles are an American rock band formed in Los Angeles in 1971. With five number-one singles and six number-one albums, they were one of the most successful musical acts of the 1970s.',
     url: 'https://en.wikipedia.org/wiki/Eagles_(band)',
   }),
-  scrobble_status: () => ({ listenbrainzUser: 'ashen', lastfmUser: null, lastfmHasKey: false, pending: 0 }),
+  scrobble_status: () => ({ listenbrainzUser: 'ashen', lastfmUser: null, lastfmHasKey: true, lastfmBuiltIn: true, pending: 0 }),
   dlna_status: () => ({ renderer: true, server: false, name: 'HiFi Player (PC)', address: 'http://192.168.1.20:8897' }),
   cover_colors: () => ['#3f6d4e', '#c9a34a'],
   track_lyrics: () => ({

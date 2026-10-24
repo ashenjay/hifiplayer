@@ -21,8 +21,11 @@ pub fn start(app: &AppHandle) {
                 std::thread::sleep(Duration::from_secs(2));
                 let state = app.state::<AppState>();
                 let online = state.settings.lock().unwrap().online.clone();
-                let app_id = online.discord_app_id.trim().to_string();
-                if !online.discord || app_id.is_empty() {
+                let app_id = match online.discord_app_id.trim() {
+                    "" => hifiplayer::online::discord::DEFAULT_APP_ID.to_string(),
+                    own => own.to_string(),
+                };
+                if !online.discord {
                     if presence.is_connected() {
                         let _ = presence.set(&app_id, None);
                         presence.disconnect();

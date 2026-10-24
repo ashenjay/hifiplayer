@@ -42,7 +42,7 @@ pub struct OnlineSettings {
     /// Fetch missing covers and artist biographies from MusicBrainz / Wikipedia.
     pub lookup_info: bool,
     pub discord: bool,
-    /// Application ID from discord.com/developers.
+    /// Own application ID from discord.com/developers; empty = HiFi Player's.
     pub discord_app_id: String,
     /// Other apps on the network can send music to HiFi Player.
     pub dlna_renderer: bool,

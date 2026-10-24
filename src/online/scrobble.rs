@@ -11,6 +11,19 @@ use crate::settings::Secrets;
 use crate::streaming::{HttpError, agent, json};
 
 const LB: &str = "https://api.listenbrainz.org/1";
+
+/// HiFi Player's own Last.fm API account, added by the release build from
+/// repository secrets (never stored in the source). Self-built copies fall
+/// back to a key the user enters.
+const BUILT_IN_KEY: Option<&str> = option_env!("HIFI_LASTFM_KEY");
+const BUILT_IN_SECRET: Option<&str> = option_env!("HIFI_LASTFM_SECRET");
+
+fn built_in_keys() -> Option<(String, String)> {
+    match (BUILT_IN_KEY, BUILT_IN_SECRET) {
+        (Some(k), Some(s)) if !k.trim().is_empty() && !s.trim().is_empty() => Some((k.trim().into(), s.trim().into())),
+        _ => None,
+    }
+}
 const LASTFM: &str = "https://ws.audioscrobbler.com/2.0/";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -30,6 +43,8 @@ pub struct ScrobbleStatus {
     pub lastfm_user: Option<String>,
     /// The user's Last.fm API key is saved (needed to connect).
     pub lastfm_has_key: bool,
+    /// This build comes with HiFi Player's own Last.fm key.
+    pub lastfm_built_in: bool,
     pub pending: usize,
 }
 
@@ -37,7 +52,8 @@ pub fn status(lib: Option<&Library>) -> ScrobbleStatus {
     ScrobbleStatus {
         listenbrainz_user: Secrets::get("listenbrainz_token").and(Secrets::get("listenbrainz_user")),
         lastfm_user: Secrets::get("lastfm_session").and(Secrets::get("lastfm_user")),
-        lastfm_has_key: Secrets::get("lastfm_api_key").is_some() && Secrets::get("lastfm_api_secret").is_some(),
+        lastfm_has_key: lastfm_keys().is_ok(),
+        lastfm_built_in: built_in_keys().is_some(),
         pending: lib.and_then(|l| l.pending_scrobbles().ok()).map(|p| p.len()).unwrap_or(0),
     }
 }
@@ -101,7 +117,7 @@ fn lb_submit(token: &str, kind: &str, s: &Scrobble) -> Result<()> {
 fn lastfm_keys() -> Result<(String, String)> {
     match (Secrets::get("lastfm_api_key"), Secrets::get("lastfm_api_secret")) {
         (Some(k), Some(s)) => Ok((k, s)),
-        _ => Err(anyhow!("enter your Last.fm API key and secret first")),
+        _ => built_in_keys().ok_or_else(|| anyhow!("enter your Last.fm API key and secret first")),
     }
 }
 

@@ -344,6 +344,7 @@ export interface ScrobbleStatus {
   listenbrainzUser?: string | null
   lastfmUser?: string | null
   lastfmHasKey: boolean
+  lastfmBuiltIn: boolean
   pending: number
 }
 

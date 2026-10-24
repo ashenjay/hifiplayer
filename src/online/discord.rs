@@ -7,6 +7,10 @@ use std::io::{Read, Write};
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 
+/// HiFi Player's own Discord application, so users only need to switch the
+/// status on. (An application ID is public; Discord shows its name.)
+pub const DEFAULT_APP_ID: &str = "1563402630250766376";
+
 pub struct Activity {
     pub title: String,
     pub artist: Option<String>,
