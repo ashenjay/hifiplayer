@@ -1,12 +1,16 @@
-# Builds the Windows installer and creates a draft GitHub release when a
-# version tag is pushed:   git tag v1.0.1 && git push origin v1.0.1
-# Review the draft on GitHub, paste the CHANGELOG entry, then publish it.
+# Builds the Windows installer and creates a draft GitHub release.
+# Run it by hand: Actions → Release → Run workflow, entering the version (e.g. 1.0.1)
+# after bumping the version, updating CHANGELOG.md and pushing to main.
+# Review the draft on GitHub, then publish it.
 
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (must match tauri.conf.json), e.g. 1.0.1
+        required: true
 
 permissions:
   contents: write
@@ -16,6 +20,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check version
+        shell: pwsh
+        run: |
+          $v = (Get-Content app/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          if ($v -ne '${{ inputs.version }}') { throw "tauri.conf.json has $v, not ${{ inputs.version }}. Run scripts/bump-version.ps1 first." }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
@@ -30,8 +39,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: app
-          tagName: ${{ github.ref_name }}
-          releaseName: HiFi Player ${{ github.ref_name }}
+          tagName: v${{ inputs.version }}
+          releaseName: HiFi Player v${{ inputs.version }}
           releaseBody: See CHANGELOG.md for what's new in this version.
           releaseDraft: true
           prerelease: false

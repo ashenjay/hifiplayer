@@ -157,8 +157,8 @@ Versions follow [Semantic Versioning](https://semver.org): `1.0.1` for bug fixes
 1. `powershell -File scripts\bump-version.ps1 1.0.1` sets the version everywhere.
 2. Add the changes to [CHANGELOG.md](CHANGELOG.md).
 3. If dependencies changed: `powershell -File scripts\third-party-notices.ps1`.
-4. Commit, then `git tag v1.0.1` and `git push origin main v1.0.1`.
-5. GitHub Actions builds the installer and creates a draft release. Review it and publish.
+4. Commit and `git push origin main`.
+5. On GitHub, go to **Actions → Release → Run workflow** and enter the version. The workflow builds the installer and creates a draft release. Review it and publish.
 
 </details>
 
