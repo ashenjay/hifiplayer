@@ -4,5 +4,6 @@
 
 pub mod dsd;
 pub mod engine;
+pub mod library;
 pub mod output;
 pub mod source;

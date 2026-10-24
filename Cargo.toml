@@ -8,7 +8,10 @@ description = "Bit-perfect Windows music player with WASAPI Exclusive, ASIO and 
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 ctrlc = "3.5.2"
+lofty = "0.25.4"
+rayon = "1.12.0"
 rtrb = "0.4.0"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 symphonia = { version = "0.6.1", features = ["all"] }
 wasapi = "0.26.0"
 

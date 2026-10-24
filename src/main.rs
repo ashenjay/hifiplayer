@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use hifiplayer::engine::{self, DsdMode, PlayOptions};
+use hifiplayer::library::{self, Library};
 use hifiplayer::output::{self, Backend};
 
 #[derive(Parser)]
@@ -20,7 +21,7 @@ struct Cli {
 enum Cmd {
     /// List WASAPI output devices and ASIO drivers with their capabilities
     Devices,
-    /// Play files or folders
+    /// Play files, folders, or an album from the library
     Play {
         /// Output type
         #[arg(short, long, value_enum, default_value_t = Backend::Wasapi)]
@@ -31,16 +32,47 @@ enum Cmd {
         /// How to play DSD files
         #[arg(long, value_enum, default_value_t = DsdMode::Auto)]
         dsd: DsdMode,
+        /// Play a library album by its number (see `library albums`)
+        #[arg(short, long, conflicts_with = "paths")]
+        album: Option<i64>,
         /// Audio files or folders
-        #[arg(required = true)]
+        #[arg(required_unless_present = "album")]
         paths: Vec<PathBuf>,
+    },
+    /// Manage and browse the music library
+    Library {
+        #[command(subcommand)]
+        cmd: LibCmd,
     },
 }
 
-static QUIT: AtomicBool = AtomicBool::new(false);
+#[derive(Subcommand)]
+enum LibCmd {
+    /// Add music folders and scan them
+    Add { #[arg(required = true)] folders: Vec<PathBuf> },
+    /// Remove a folder from the library (your files are not deleted)
+    Remove { folder: String },
+    /// List library folders
+    Folders,
+    /// Rescan library folders for new, changed and removed files
+    Scan {
+        /// Re-read every file, not just changed ones
+        #[arg(long)]
+        full: bool,
+    },
+    /// List albums, optionally filtered by title or artist
+    Albums { filter: Option<String> },
+    /// List artists
+    Artists,
+    /// Show an album's tracks
+    Album { id: i64 },
+    /// Search albums and tracks
+    Search { text: String },
+    /// Library totals
+    Stats,
+}
 
-const AUDIO_EXTS: &[&str] =
-    &["flac", "wav", "aif", "aiff", "m4a", "alac", "caf", "mp3", "ogg", "oga", "mka", "dsf", "dff"];
+static QUIT: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     let cli = Cli::parse();
@@ -50,7 +82,14 @@ fn main() {
             devices();
             Ok(())
         }
-        Cmd::Play { output, device, dsd, paths } => play(PlayOptions { backend: output, device, dsd_mode: dsd }, &paths),
+        Cmd::Play { output, device, dsd, album, paths } => {
+            let opts = PlayOptions { backend: output, device, dsd_mode: dsd };
+            match album {
+                Some(id) => play_album(opts, id),
+                None => play(opts, collect_files(&paths)),
+            }
+        }
+        Cmd::Library { cmd } => library_cmd(cmd),
     };
     if let Err(e) = result {
         eprintln!("error: {e:#}");
@@ -76,10 +115,163 @@ fn devices() {
     println!("Example:  hifiplayer play --output asio --device \"iFi\" \"D:\\Music\\album\"");
 }
 
-fn play(opts: PlayOptions, paths: &[PathBuf]) -> Result<()> {
-    let files = collect_files(paths);
+// ---- Library ---------------------------------------------------------------
+
+fn library_cmd(cmd: LibCmd) -> Result<()> {
+    let mut lib = Library::open_default()?;
+    match cmd {
+        LibCmd::Add { folders } => {
+            for f in &folders {
+                println!("Added {}", lib.add_folder(f)?);
+            }
+            scan(&mut lib, false)
+        }
+        LibCmd::Remove { folder } => {
+            let n = lib.remove_folder(&folder)?;
+            println!("Removed {folder} ({n} tracks) from the library. Files on disk were not touched.");
+            Ok(())
+        }
+        LibCmd::Folders => {
+            let folders = lib.folders()?;
+            if folders.is_empty() {
+                println!("No folders yet. Add one with: hifiplayer library add \"D:\\Music\"");
+            }
+            for f in folders {
+                let state = if Path::new(&f).is_dir() { "" } else { "  (not available)" };
+                println!("  {f}{state}");
+            }
+            Ok(())
+        }
+        LibCmd::Scan { full } => scan(&mut lib, full),
+        LibCmd::Albums { filter } => {
+            let albums = lib.albums(filter.as_deref())?;
+            print_albums(&albums);
+            if albums.is_empty() {
+                println!("No albums found.");
+            } else {
+                println!("\n{} albums. Play one with: hifiplayer play --album <number>", albums.len());
+            }
+            Ok(())
+        }
+        LibCmd::Artists => {
+            for a in lib.artists()? {
+                println!("  {}  ({} albums, {} tracks)", a.name, a.albums, a.tracks);
+            }
+            Ok(())
+        }
+        LibCmd::Album { id } => {
+            let Some(album) = lib.album(id)? else { bail!("no album #{id}") };
+            println!("{} — {}{}", album.artist, album.title, year(album.year));
+            println!("{} tracks · {} · {}", album.tracks, clock(album.duration), album.quality);
+            if let Some(art) = &album.art_path {
+                println!("Cover: {art}");
+            }
+            println!();
+            for t in lib.album_tracks(id)? {
+                let num = match (t.disc_no, t.track_no) {
+                    (Some(d), Some(n)) if d > 1 || album.tracks > 99 => format!("{d}-{n:02}"),
+                    (_, Some(n)) => format!("{n:02}"),
+                    _ => "--".into(),
+                };
+                let artist = t.artist.filter(|a| *a != album.artist).map(|a| format!("  ({a})")).unwrap_or_default();
+                println!("  {num}  {}{artist}  {}  {}", t.title, clock(t.duration), t.quality);
+            }
+            Ok(())
+        }
+        LibCmd::Search { text } => {
+            let (albums, tracks) = lib.search(&text)?;
+            println!("Albums:");
+            print_albums(&albums);
+            println!("\nTracks:");
+            for t in &tracks {
+                let album = t.album_id.map(|id| format!("#{id}")).unwrap_or_default();
+                println!(
+                    "  {} — {}  [{}]  {} {}",
+                    t.artist.as_deref().unwrap_or("?"),
+                    t.title,
+                    t.album.as_deref().unwrap_or(""),
+                    t.quality,
+                    album
+                );
+            }
+            if albums.is_empty() && tracks.is_empty() {
+                println!("Nothing matches \"{text}\".");
+            }
+            Ok(())
+        }
+        LibCmd::Stats => {
+            let s = lib.stats()?;
+            println!("Folders : {}", s.folders);
+            println!("Artists : {}", s.artists);
+            println!("Albums  : {}", s.albums);
+            println!("Tracks  : {} ({:.1} hours)", s.tracks, s.hours);
+            println!("Hi-res  : {} tracks", s.hi_res_tracks);
+            println!("DSD     : {} tracks", s.dsd_tracks);
+            if let Some(db) = lib.db_path() {
+                println!("Database: {db}");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn scan(lib: &mut Library, full: bool) -> Result<()> {
+    println!("Scanning...");
+    let r = lib.scan(full, |done, total| {
+        print!("\r  reading tags {done}/{total}   ");
+        let _ = std::io::stdout().flush();
+    })?;
+    println!(
+        "\r  {} files: {} added, {} updated, {} removed · {} albums · {:.1}s          ",
+        r.found, r.added, r.updated, r.removed, r.albums, r.seconds
+    );
+    for f in &r.unavailable {
+        println!("  Folder not available (kept as is): {f}");
+    }
+    if r.still_unreadable > 0 {
+        println!("  {} unreadable files skipped (unchanged since the last scan; use --full to retry)", r.still_unreadable);
+    }
+    if !r.failed.is_empty() {
+        println!("  {} files could not be read:", r.failed.len());
+        for (path, err) in r.failed.iter().take(10) {
+            println!("    {}: {err}", path.display());
+        }
+    }
+    Ok(())
+}
+
+fn print_albums(albums: &[library::Album]) {
+    for a in albums {
+        println!(
+            "  #{:<5} {} — {}{}  · {} tracks · {} · {}",
+            a.id,
+            a.artist,
+            a.title,
+            year(a.year),
+            a.tracks,
+            clock(a.duration),
+            a.quality
+        );
+    }
+}
+
+fn year(y: Option<u32>) -> String {
+    y.map(|y| format!(" ({y})")).unwrap_or_default()
+}
+
+// ---- Playback --------------------------------------------------------------
+
+fn play_album(opts: PlayOptions, id: i64) -> Result<()> {
+    let lib = Library::open_default()?;
+    let Some(album) = lib.album(id)? else { bail!("no album #{id} (see `hifiplayer library albums`)") };
+    println!("{} — {}{} · {}", album.artist, album.title, year(album.year), album.quality);
+    let files = lib.album_tracks(id)?.into_iter().map(|t| t.path).collect();
+    play(opts, files)
+}
+
+fn play(opts: PlayOptions, files: Vec<PathBuf>) -> Result<()> {
     if files.is_empty() {
-        anyhow::bail!("no playable audio files found");
+        bail!("no playable audio files found");
     }
     let total = files.len();
     for (i, file) in files.iter().enumerate() {
@@ -125,7 +317,11 @@ fn play(opts: PlayOptions, paths: &[PathBuf]) -> Result<()> {
 
 fn clock(secs: f64) -> String {
     let s = secs.max(0.0) as u64;
-    format!("{:02}:{:02}", s / 60, s % 60)
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{:02}:{:02}", s / 60, s % 60)
+    }
 }
 
 fn collect_files(paths: &[PathBuf]) -> Vec<PathBuf> {
@@ -147,11 +343,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     for p in entries {
         if p.is_dir() {
             walk(&p, out);
-        } else if p
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| AUDIO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-        {
+        } else if library::is_audio(&p) {
             out.push(p);
         }
     }

@@ -14,7 +14,31 @@ Bit-perfect music player for Windows. Phase 1: the playback engine and a command
 | PCM formats | FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC/M4A, Ogg Vorbis. |
 | Signal path | Shows source, processing, the exact device format, and whether playback is bit-perfect. |
 
-Not yet: DST-compressed DFF, SACD ISO, volume/EQ/upsampling, gapless playback, library, UI, Spotify.
+| Music library | SQLite catalogue of folders, albums, artists and tracks. Incremental rescans, cover art, search. |
+
+Not yet: DST-compressed DFF, SACD ISO, volume/EQ/upsampling, gapless playback, UI, Spotify.
+
+## Library
+
+```
+hifiplayer library add "D:\Music"     # add a folder and scan it
+hifiplayer library scan               # pick up new, changed and deleted files (--full re-reads all)
+hifiplayer library albums [filter]    # list albums with their numbers
+hifiplayer library album 25           # tracks of album #25
+hifiplayer library artists
+hifiplayer library search "hotel"
+hifiplayer library stats
+hifiplayer play --output asio --device iFi --album 25
+```
+
+- **Storage:** the database and cached cover art live in `%LOCALAPPDATA%\hifiplayer`.
+- **Tags:** read with lofty for FLAC, MP3, M4A, WAV and AIFF, and with a built-in ID3v2 reader for DSF and DFF.
+- **Grouping:** albums are grouped by album artist and title, with these rules:
+  - Compilation folders (many tracks with mostly different album tags) become one "Various Artists" album named after the folder.
+  - Without an album-artist tag, the artist on most of the tracks is used; "feat." guests are ignored.
+  - Untagged files take the artist and album from an "Artist - Album (Year)" folder name.
+- **Unavailable folders:** a folder that can't be read (e.g. an unplugged drive) keeps its tracks instead of being wiped.
+- **Unreadable files** are recorded and only retried when the file changes, or with `--full`.
 
 ## Usage
 
@@ -46,5 +70,6 @@ cargo run --release --example make_test_files -- test-files # quiet -30 dB test 
 - `src/source/`: PCM decoding (symphonia) and the DSF/DFF readers
 - `src/dsd/`: DoP packing and DSD→PCM conversion
 - `src/output/`: WASAPI Exclusive and ASIO (`asio/ffi.rs` is the raw driver interface)
+- `src/library/`: library database, folder scanning, tag reading (`id3.rs` for DSD files)
 - `src/engine.rs`: picks the playback path, falls back when the device refuses, runs the decode thread
 - `src/main.rs`: command-line interface
