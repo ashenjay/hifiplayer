@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-10-25
+
 ### Fixed
 - The seek bar's coloured part and handle could drift apart, looking like a double line. It now moves smoothly instead of in steps.
 - The seek bar could freeze (also when Spotify Connect took over, and afterwards) if a drag was released outside the bar.
@@ -82,7 +84,8 @@ First public release.
 - Spotify streams are Ogg Vorbis 320 kbps (not lossless).
 - Full Qobuz/Tidal streaming needs partner API access from those services.
 
-[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/ashenjay/hifiplayer/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/ashenjay/hifiplayer/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/ashenjay/hifiplayer/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ashenjay/hifiplayer/compare/v1.1.0...v1.2.0
