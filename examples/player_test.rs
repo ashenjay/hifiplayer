@@ -28,7 +28,7 @@ fn main() {
     let dir = args.next().expect("test-files dir");
     let dir = Path::new(&dir);
     let opts = match args.next() {
-        Some(dev) => PlayOptions { backend: Backend::Asio, device: Some(dev), dsd_mode: DsdMode::Auto },
+        Some(dev) => PlayOptions { backend: Backend::Asio, device: Some(dev), dsd_mode: DsdMode::Auto, buffer: Default::default() },
         None => PlayOptions::default(),
     };
     let player = Player::new(opts);

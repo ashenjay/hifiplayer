@@ -60,6 +60,14 @@ pub struct PlayerState {
     pub sleep: Option<SleepState>,
     /// The DAC disappeared mid-track; the player is waiting for it to come back.
     pub reconnecting: bool,
+    /// One-off information for the UI (e.g. "DAC switched to DSD128"); `notice_id` changes with it.
+    pub notice: Option<String>,
+    pub notice_id: u64,
+    /// Buffer underruns since the app started, and the track of the last one.
+    pub dropouts_session: u64,
+    pub last_dropout: Option<String>,
+    /// Device to use when the chosen one isn't available.
+    pub fallback: Option<PlayOptions>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +140,7 @@ pub enum Command {
     SetShuffle(bool),
     SetRepeat(Repeat),
     SetSleep(Option<SleepTimer>),
+    SetFallback(Option<PlayOptions>),
 }
 
 #[derive(Clone)]
@@ -164,6 +173,11 @@ impl Player {
             repeat,
             sleep: None,
             reconnecting: false,
+            notice: None,
+            notice_id: 0,
+            dropouts_session: 0,
+            last_dropout: None,
+            fallback: None,
         }));
         let (tx, rx) = mpsc::channel();
         let st = state.clone();
@@ -181,6 +195,7 @@ impl Player {
                     sleep_at: None,
                     reconnect: None,
                     last_saved: Instant::now(),
+                    last_rate: None,
                 }
                 .run(rx)
             })
@@ -225,6 +240,28 @@ struct Control {
     sleep_at: Option<Instant>,
     reconnect: Option<Reconnect>,
     last_saved: Instant,
+    /// Stream rate of the previous track, to announce rate changes.
+    last_rate: Option<u32>,
+}
+
+/// Update the stream's underrun count and the session dropout history.
+fn record_dropouts(st: &mut PlayerState, underruns: u64) {
+    if underruns > st.underruns {
+        st.dropouts_session += underruns - st.underruns;
+        let item = st.live.clone().or_else(|| st.index.and_then(|i| st.queue.get(i).cloned()));
+        st.last_dropout = item.map(|i| i.title);
+    }
+    st.underruns = underruns;
+}
+
+/// "96 kHz", "DSD128", "176.4 kHz (DoP)".
+fn format_rate(p: &SignalPath) -> String {
+    use crate::engine::PathKind;
+    match p.kind {
+        PathKind::NativeDsd => crate::source::dsd_name(p.stream_rate),
+        PathKind::Dop => format!("{} (DoP)", crate::source::dsd_name(p.stream_rate * 16)),
+        _ => format!("{} kHz", crate::source::khz(p.stream_rate)),
+    }
 }
 
 /// Waiting for a DAC that disappeared mid-playback.
@@ -356,6 +393,7 @@ impl Control {
                 self.state.lock().unwrap().repeat = r;
                 self.restart_chain();
             }
+            Command::SetFallback(f) => self.state.lock().unwrap().fallback = f,
             Command::SetSleep(timer) => {
                 self.stop_after_track.store(false, Ordering::Relaxed);
                 self.sleep_at = None;
@@ -558,7 +596,14 @@ impl Control {
         }
     }
 
-    /// Try to start one track (no skipping).
+    fn notify(&self, text: String) {
+        let mut st = self.state.lock().unwrap();
+        st.notice = Some(text);
+        st.notice_id += 1;
+    }
+
+    /// Try to start one track (no skipping). If the chosen device can't be
+    /// opened and a fallback device is set, play there instead.
     fn start_once(&mut self, i: usize, secs: f64) -> anyhow::Result<()> {
         let item = self.queue.lock().unwrap().get(i).cloned().ok_or_else(|| anyhow::anyhow!("no such track"))?;
         {
@@ -568,7 +613,20 @@ impl Control {
             st.duration = item.duration;
             st.status = Status::Loading;
         }
-        let p = engine::start(i, &item.media, secs, &self.opts(), self.next_fn())?;
+        let opts = self.opts();
+        let p = match engine::start(i, &item.media, secs, &opts, self.next_fn()) {
+            Ok(p) => p,
+            Err(e) if format!("{e:#}").starts_with("the device could not play") => {
+                let fallback = self.state.lock().unwrap().fallback.clone().filter(|f| *f != opts);
+                let Some(f) = fallback else { return Err(e) };
+                let p = engine::start(i, &item.media, secs, &f, self.next_fn()).map_err(|_| e)?;
+                let name = |o: &PlayOptions| o.device.clone().unwrap_or_else(|| "the default device".into());
+                self.notify(format!("{} isn't available — playing on {}", name(&opts), name(&f)));
+                p
+            }
+            Err(e) => return Err(e),
+        };
+        self.last_rate = Some(p.path.stream_rate);
         let mut st = self.state.lock().unwrap();
         st.signal_path = Some(p.path.clone());
         st.status = Status::Playing;
@@ -736,7 +794,8 @@ impl Control {
             self.update_spotify_state();
             let finished = self.current.as_ref().is_none_or(|p| p.is_finished());
             if let Some(p) = &self.current {
-                self.state.lock().unwrap().underruns = p.underruns();
+                let mut st = self.state.lock().unwrap();
+                record_dropouts(&mut st, p.underruns());
             }
             if finished {
                 self.end_spotify();
@@ -754,7 +813,7 @@ impl Control {
             st.index = Some(pos.index);
             st.position = pos.secs;
             st.duration = pos.duration.or(st.duration);
-            st.underruns = p.underruns();
+            record_dropouts(&mut st, p.underruns());
         }
         if !p.is_finished() {
             return;
@@ -762,7 +821,18 @@ impl Control {
         let played = pos;
         let p = self.current.take().unwrap();
         match p.wait() {
-            Ok(Some((next, _))) => self.play_at(next, 0.0),
+            Ok(Some((next, _))) => {
+                let before = self.last_rate;
+                self.play_at(next, 0.0);
+                let st = self.state.lock().unwrap();
+                if let Some(p) = &st.signal_path
+                    && Some(p.stream_rate) != before
+                {
+                    let what = format_rate(p);
+                    drop(st);
+                    self.notify(format!("DAC switched to {what}"));
+                }
+            }
             Ok(None) => {
                 if self.stop_after_track.swap(false, Ordering::Relaxed) {
                     // Sleep timer "end of track": stop on the next track, ready to resume.

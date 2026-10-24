@@ -83,7 +83,7 @@ fn main() {
             Ok(())
         }
         Cmd::Play { output, device, dsd, album, paths } => {
-            let opts = PlayOptions { backend: output, device, dsd_mode: dsd };
+            let opts = PlayOptions { backend: output, device, dsd_mode: dsd, buffer: Default::default() };
             match album {
                 Some(id) => play_album(opts, id),
                 None => play(opts, collect_files(&paths)),

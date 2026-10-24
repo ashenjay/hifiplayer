@@ -27,6 +27,40 @@ pub struct Settings {
     pub stream_quality: StreamQuality,
     pub remote: RemoteSettings,
     pub desktop: DesktopSettings,
+    /// Remembered DSD mode and buffer size per output device ("asio:Name" / "wasapi:Name").
+    pub devices: BTreeMap<String, DeviceProfile>,
+    /// Played on instead when the chosen device is unplugged or busy.
+    pub fallback: Option<PlayOptions>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DeviceProfile {
+    pub dsd_mode: crate::engine::DsdMode,
+    pub buffer: crate::output::BufferSize,
+}
+
+impl Settings {
+    pub fn device_key(opts: &PlayOptions) -> String {
+        format!("{}:{}", opts.backend.as_str(), opts.device.as_deref().unwrap_or(""))
+    }
+
+    /// Switch output, restoring that device's remembered DSD mode and buffer.
+    pub fn switch_output(&mut self, backend: crate::output::Backend, device: Option<String>) -> PlayOptions {
+        let mut opts = PlayOptions { backend, device, ..self.output.clone() };
+        if let Some(p) = self.devices.get(&Self::device_key(&opts)) {
+            opts.dsd_mode = p.dsd_mode;
+            opts.buffer = p.buffer;
+        }
+        self.set_output(opts.clone());
+        opts
+    }
+
+    /// Store the output and remember its DSD mode and buffer for that device.
+    pub fn set_output(&mut self, opts: PlayOptions) {
+        self.devices.insert(Self::device_key(&opts), DeviceProfile { dsd_mode: opts.dsd_mode, buffer: opts.buffer });
+        self.output = opts;
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

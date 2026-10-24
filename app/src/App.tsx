@@ -125,12 +125,19 @@ export default function App() {
 
   // Live player state, plus playback errors as toasts.
   const lastError = useRef<string | null>(null)
+  const lastNotice = useRef<number | null>(null)
   useEffect(() => {
-    api.playerState().then(setPlayer).catch(() => {})
+    api.playerState().then((s) => {
+      lastNotice.current ??= s.noticeId
+      setPlayer(s)
+    }).catch(() => {})
     const un = listen<PlayerState>('player-state', (s) => {
       setPlayer(s)
       if (s.error && s.error !== lastError.current) toast(s.error)
       lastError.current = s.error ?? null
+      // Notices such as "DAC switched to DSD128" or a fallback device.
+      if (lastNotice.current != null && s.noticeId !== lastNotice.current && s.notice) toast(s.notice)
+      lastNotice.current = s.noticeId
     })
     return () => { un.then((f) => f()) }
   }, [toast])

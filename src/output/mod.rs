@@ -25,6 +25,15 @@ pub enum Backend {
     Asio,
 }
 
+impl Backend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Backend::Wasapi => "wasapi",
+            Backend::Asio => "asio",
+        }
+    }
+}
+
 /// What the engine asks an output to carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamFormat {
@@ -45,9 +54,20 @@ impl StreamFormat {
     }
 }
 
+/// Device buffer size: smaller reacts faster, larger survives a busy PC better.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BufferSize {
+    Small,
+    #[default]
+    Normal,
+    Large,
+}
+
 /// Shared state between the engine, the output thread and the audio callback.
 #[derive(Default)]
 pub struct Control {
+    pub buffer: BufferSize,
     pub stop: AtomicBool,
     /// While set, the device keeps running on silence and the ring is not consumed.
     pub paused: AtomicBool,
@@ -72,6 +92,8 @@ pub struct OpenInfo {
     pub description: String,
     /// Valid bits per sample delivered to the device (0 for native DSD).
     pub valid_bits: u32,
+    /// The rate the device reports it is running at (checked after opening).
+    pub locked_rate: Option<u32>,
 }
 
 pub struct RunningOutput {

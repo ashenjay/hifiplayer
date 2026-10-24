@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, clock, currentItem, type Repeat, type SleepTimer } from '../api'
+import { api, clock, currentItem, rateLabel, type DeviceInfo, type Repeat, type SleepTimer } from '../api'
 import { useNav } from '../nav'
 import { Cover, Icon } from './common'
 import { quality, SignalPathView } from './SignalPathView'
@@ -77,6 +77,48 @@ function SleepButton() {
             <button key={m} onClick={() => set({ kind: 'minutes', minutes: m })}>Pause in {m} minutes</button>
           ))}
           {sleep && <button onClick={() => set(null)}>Turn off sleep timer</button>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Speaker button: switch output device without going to Settings. */
+function DeviceButton() {
+  const { player, toast } = useNav()
+  const [open, setOpen] = useState(false)
+  const [devices, setDevices] = useState<DeviceInfo[] | null>(null)
+  const anchor = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    api.devices().then(setDevices).catch((e) => toast(String(e)))
+    const close = (e: MouseEvent) => {
+      if (!anchor.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open, toast])
+  const opts = player?.options
+  const pick = (d: DeviceInfo) => {
+    setOpen(false)
+    api.switchDevice(d.backend, d.name).catch((e) => toast(String(e)))
+  }
+  const current = (d: DeviceInfo) =>
+    opts?.backend === d.backend && !!opts.device && d.name.toLowerCase().includes(opts.device.toLowerCase())
+  return (
+    <div className="sp-anchor" ref={anchor}>
+      <button className="icon-btn small-btn" title={`Output: ${opts?.device ?? 'Windows default'}`} onClick={() => setOpen((o) => !o)}>
+        {Icon.speaker}
+      </button>
+      {open && (
+        <div className="menu menu-up device-menu">
+          <div className="menu-title">Output device</div>
+          {devices == null && <div className="muted small menu-note">Looking for devices…</div>}
+          {devices?.map((d) => (
+            <button key={d.backend + d.name} className={current(d) ? 'active' : ''} onClick={() => pick(d)} title={d.details}>
+              <span className="badge badge-cd">{d.backend === 'asio' ? 'ASIO' : 'WASAPI'}</span> {d.name}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -166,16 +208,22 @@ export function NowPlayingBar() {
             </button>
             {showPath && (
               <div className="popover">
-                <SignalPathView path={path} />
+                <SignalPathView path={path} dropouts={player?.dropoutsSession} lastDropout={player?.lastDropout} />
               </div>
             )}
           </div>
         )}
+        {path?.stream_rate ? (
+          <span className="dac-rate small muted" title="Rate the DAC is running at">
+            {path.kind === 'dop' ? rateLabel(path.stream_rate * 16) : rateLabel(path.stream_rate)}
+          </span>
+        ) : null}
         {player?.reconnecting ? (
           <span className="warn small" title="The DAC was disconnected; playback continues when it is back">Waiting for DAC…</span>
         ) : (
           player?.status === 'loading' && <span className="muted small">Loading…</span>
         )}
+        <DeviceButton />
         <SleepButton />
         {item && <KeyboardHint />}
         {!!player?.underruns && <span className="warn small" title="The decoder could not keep up">{player.underruns} dropouts</span>}

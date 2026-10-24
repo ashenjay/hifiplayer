@@ -2138,6 +2138,7 @@ dependencies = [
  "rayon",
  "rtrb",
  "rusqlite",
+ "rustfft",
  "serde",
  "serde_json",
  "symphonia 0.6.1",

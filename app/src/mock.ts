@@ -30,12 +30,12 @@ const queue: QueueItem[] = tracks.map((t) => ({
 
 const state: PlayerState = {
   status: 'playing', queue, index: 0, position: 83, duration: 391, underruns: 0, error: null,
-  shuffle: false, repeat: 'off', sleep: null, reconnecting: false,
+  shuffle: false, repeat: 'off', sleep: null, reconnecting: false, notice: null, noticeId: 0, dropoutsSession: 0, lastDropout: null,
   options: { backend: 'asio', device: 'iFi USB Audio Device', dsd_mode: 'auto' },
   signalPath: {
     source: 'DSF · DSD64 (2.8224 MHz), 2 ch', processing: 'None (native DSD64)',
     output: 'ASIO · iFi USB Audio Device · Native DSD DSD64 (2.8224 MHz) · DSD 8 bits/byte, MSB first · buffer 65536',
-    bit_perfect: true, kind: 'nativedsd', fallbacks: [],
+    bit_perfect: true, kind: 'nativedsd', fallbacks: [], stream_rate: 2822400, locked_rate: 2822400,
   },
 }
 
@@ -54,6 +54,11 @@ const albumsFull = albums.map((a) => ({ ...a, favorite: a.id === 2, releaseType:
 const tracksFull = tracks.map((t) => ({ ...t, rating: t.trackNo === 1 ? 5 : 0, favorite: t.trackNo === 2, playCount: 3, composer: null }))
 
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
+  album_extras: () => [],
+  album_analysis: () => tracksFull.slice(0, 4).map((t, i) => ({
+    track: t,
+    analysis: { dr: 12 - i, lufs: -14 + i, peakDb: -0.3, bitsUsed: 24, cutoffHz: 21000, verdict: i === 2 ? { kind: 'upsampled', cutoff_hz: 21000 } : { kind: 'trueHiRes' } },
+  })),
   library_listening: () => ({
     totalPlays: 128, hoursListened: 9.4, playsLast30Days: 41,
     topAlbums: albumsFull.slice(0, 5).map((a, i) => [a, 20 - i]), topTracks: tracksFull.slice(0, 5),
@@ -82,7 +87,7 @@ const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
     { backend: 'wasapi', name: 'Speakers (AMR HD+ USB Audio)', details: 'Exclusive mode, PCM up to 24/32-bit at 44.1–768 kHz' },
     { backend: 'asio', name: 'iFi USB Audio Device', details: '2 outputs, 32-bit int, native DSD: DSD64/DSD128/DSD256/DSD512' },
   ],
-  get_settings: () => ({ output: state.options, streamQuality: 'max', desktop: { closeToTray: true, startWithWindows: false, globalHotkeys: true } }),
+  get_settings: () => ({ devices: {}, fallback: null, output: state.options, streamQuality: 'max', desktop: { closeToTray: true, startWithWindows: false, globalHotkeys: true } }),
   services_status: () => [
     { service: 'qobuz', configured: true, loggedIn: true, user: 'Demo user', plan: 'Studio' },
     { service: 'tidal', configured: false, loggedIn: false },

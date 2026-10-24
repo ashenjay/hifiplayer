@@ -4,7 +4,7 @@ import { AlbumGrid } from '../components/AlbumGrid'
 import { Cover, ErrorBox, Icon, Loading, QualityBadge, useLoad } from '../components/common'
 import { TrackList } from '../components/TrackList'
 import { useNav } from '../nav'
-import { AlbumTools } from './AlbumTools'
+import { AlbumAnalysis, AlbumTools } from './AlbumTools'
 import { albumGrid, trackQueueItems, trackRows } from './Collection'
 
 type Sort = 'artist' | 'title' | 'year' | 'recent'
@@ -135,6 +135,7 @@ export function AlbumPage({ id }: { id: number }) {
             {[album.year, `${album.tracks} tracks`, clock(album.duration)].filter(Boolean).join(' · ')}
           </div>
           <QualityBadge quality={album.quality} />
+          <AlbumAnalysis album={album} />
           <div className="hero-actions">
             <button className="primary" onClick={() => api.playAlbum(album.id).catch((e) => toast(String(e)))}>
               {Icon.play} Play

@@ -49,7 +49,7 @@ fn main() -> anyhow::Result<()> {
     check("the album file itself is not listed separately", !whole_file_listed);
 
     // Play cue track 1 and check it stops at the track boundary (~1.67 s).
-    let player = Player::new(PlayOptions { backend: Backend::Asio, device, dsd_mode: DsdMode::Auto });
+    let player = Player::new(PlayOptions { backend: Backend::Asio, device, dsd_mode: DsdMode::Auto, buffer: Default::default() });
     // A saved session may have repeat or shuffle on.
     player.send(Command::SetRepeat(hifiplayer::player::Repeat::Off));
     player.send(Command::SetShuffle(false));

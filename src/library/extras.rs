@@ -201,6 +201,51 @@ impl Library {
         }
     }
 
+    // ---- Analysis ------------------------------------------------------------------------
+
+    /// Stored analysis of each track of an album (None = not analysed or file changed).
+    pub fn album_analysis(&self, album_id: i64) -> Result<Vec<(Track, Option<crate::analysis::Analysis>)>> {
+        let tracks = self.album_tracks(album_id)?;
+        let mut out = Vec::with_capacity(tracks.len());
+        for t in tracks {
+            let key = t.path.to_string_lossy().into_owned();
+            let stored: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT a.result FROM analysis a JOIN tracks t ON t.path = a.path
+                     WHERE a.path = ?1 AND a.mtime = t.mtime AND a.size = t.size",
+                    [&key],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            out.push((t, stored.and_then(|j| serde_json::from_str(&j).ok())));
+        }
+        Ok(out)
+    }
+
+    pub fn save_analysis(&self, track: &Track, analysis: &crate::analysis::Analysis) -> Result<()> {
+        let key = track.path.to_string_lossy().into_owned();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO analysis(path, mtime, size, result)
+             SELECT path, mtime, size, ?2 FROM tracks WHERE path = ?1",
+            params![key, serde_json::to_string(analysis)?],
+        )?;
+        Ok(())
+    }
+
+    /// Albums with tracks that have no (current) analysis yet.
+    pub fn albums_needing_analysis(&self) -> Result<Vec<i64>> {
+        Ok(self
+            .conn
+            .prepare(
+                "SELECT DISTINCT t.album_id FROM tracks t LEFT JOIN analysis a
+                   ON a.path = t.path AND a.mtime = t.mtime AND a.size = t.size
+                 WHERE a.path IS NULL AND t.album_id IS NOT NULL",
+            )?
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
+
     // ---- Booklets and artwork ---------------------------------------------------------
 
     /// PDFs and images in the album's folder(s) and their scan/artwork subfolders.

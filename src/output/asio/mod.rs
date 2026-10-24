@@ -19,7 +19,7 @@ use anyhow::{Result, anyhow, bail};
 use rtrb::Consumer;
 
 use self::ffi::*;
-use super::{Backend, Control, DeviceInfo, OpenInfo, StreamFormat, wait_for_prefill};
+use super::{Backend, BufferSize, Control, DeviceInfo, OpenInfo, StreamFormat, wait_for_prefill};
 use crate::dsd::DSD_SILENCE;
 use crate::source::{dsd_name, khz};
 
@@ -182,6 +182,68 @@ fn check(err: AsioError, what: &str) -> Result<()> {
 }
 
 /// Run `f` on a fresh COM single-threaded-apartment thread, as ASIO drivers expect.
+/// Set to ask the running stream's thread to open the driver's control panel.
+static PANEL_REQUEST: AtomicBool = AtomicBool::new(false);
+/// A panel opened while nothing plays keeps its own driver instance alive.
+static PANEL_OPEN: AtomicBool = AtomicBool::new(false);
+static PANEL_CLOSE: AtomicBool = AtomicBool::new(false);
+
+/// Open the ASIO driver's own settings window (buffer size, DSD options …).
+pub fn open_control_panel(device: Option<String>) -> Result<()> {
+    if !STATE.load(Ordering::Acquire).is_null() {
+        PANEL_REQUEST.store(true, Ordering::Release);
+        return Ok(());
+    }
+    if PANEL_OPEN.swap(true, Ordering::AcqRel) {
+        return Ok(()); // already open
+    }
+    PANEL_CLOSE.store(false, Ordering::Release);
+    let entry = find_driver(device.as_deref())?;
+    let (tx, rx) = std::sync::mpsc::channel::<Result<()>>();
+    thread::Builder::new().name("asio-panel".into()).spawn(move || {
+        unsafe { CoInitializeEx(ptr::null_mut(), COINIT_APARTMENTTHREADED) };
+        match Driver::load(&entry) {
+            Ok(drv) => {
+                let r = unsafe { (drv.vt().control_panel)(drv.0) };
+                let _ = tx.send(if r == ASE_OK { Ok(()) } else { Err(anyhow!("this driver has no control panel")) });
+                // Keep the driver loaded (the window belongs to it) for up to
+                // 10 minutes, or until playback needs the driver.
+                let mut msg = Msg { hwnd: 0, message: 0, wparam: 0, lparam: 0, time: 0, pt: [0; 2], private: 0 };
+                let until = std::time::Instant::now() + Duration::from_secs(600);
+                while std::time::Instant::now() < until && !PANEL_CLOSE.load(Ordering::Acquire) {
+                    unsafe {
+                        while PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) != 0 {
+                            TranslateMessage(&msg);
+                            DispatchMessageW(&msg);
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(30));
+                }
+                drop(drv);
+            }
+            Err(e) => {
+                let _ = tx.send(Err(e));
+            }
+        }
+        unsafe { CoUninitialize() };
+        PANEL_OPEN.store(false, Ordering::Release);
+    })?;
+    rx.recv_timeout(Duration::from_secs(10)).unwrap_or(Ok(()))
+}
+
+/// Close a stand-alone control panel before a stream opens the driver.
+fn close_panel_instance() {
+    if PANEL_OPEN.load(Ordering::Acquire) {
+        PANEL_CLOSE.store(true, Ordering::Release);
+        for _ in 0..100 {
+            if !PANEL_OPEN.load(Ordering::Acquire) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
 fn on_sta_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
     thread::spawn(move || {
         unsafe { CoInitializeEx(ptr::null_mut(), COINIT_APARTMENTTHREADED) };
@@ -394,7 +456,14 @@ unsafe fn write_pcm(buf: *mut c_void, i: usize, ty: i32, s: i32) {
     }
 }
 
-extern "C" fn sample_rate_did_change(_rate: f64) {}
+/// The driver changed rate by itself (e.g. its control panel): restart the stream,
+/// which reopens it at the file's rate.
+extern "C" fn sample_rate_did_change(_rate: f64) {
+    let p = STATE.load(Ordering::Acquire);
+    if !p.is_null() {
+        unsafe { (*p).reset_requested.store(true, Ordering::Release) };
+    }
+}
 
 extern "C" fn asio_message(selector: i32, value: i32, _msg: *mut c_void, _opt: *mut f64) -> i32 {
     match selector {
@@ -455,6 +524,7 @@ fn stream(
     ready: &Sender<Result<OpenInfo>>,
     opened: &mut bool,
 ) -> Result<()> {
+    close_panel_instance();
     let entry = find_driver(device.as_deref())?;
     let drv = Driver::load(&entry)?;
     let channels = format.channels();
@@ -484,6 +554,13 @@ fn stream(
         bail!("\"{}\" does not support {rate_label}", entry.name);
     }
     check(unsafe { (drv.vt().set_sample_rate)(drv.0, rate as f64) }, "setSampleRate")?;
+    // Ask the driver what it actually runs at now.
+    let mut actual = 0f64;
+    let locked_rate = (unsafe { (drv.vt().get_sample_rate)(drv.0, &mut actual) } == ASE_OK && actual > 0.0)
+        .then_some(actual.round() as u32);
+    if let Some(r) = locked_rate.filter(|r| r.abs_diff(rate) > 1) {
+        bail!("\"{}\" was asked for {} Hz but reports {} Hz", entry.name, rate, r);
+    }
 
     let sample_type = drv.output_sample_type()?;
     let valid_bits = if dsd {
@@ -505,7 +582,14 @@ fn stream(
         unsafe { (drv.vt().get_buffer_size)(drv.0, &mut min_sz, &mut max_sz, &mut pref_sz, &mut gran) },
         "getBufferSize",
     )?;
-    let buffer_size = pref_sz.max(min_sz).max(64) as usize;
+    let buffer_size = match ctrl.buffer {
+        BufferSize::Small => min_sz,
+        BufferSize::Normal => pref_sz,
+        // Largest the driver allows, within reason (granularity -1 = powers of two).
+        BufferSize::Large => max_sz.min(pref_sz.saturating_mul(4)),
+    }
+    .max(min_sz)
+    .max(64) as usize;
 
     let mut infos: Vec<AsioBufferInfo> = (0..channels)
         .map(|ch| AsioBufferInfo { is_input: 0, channel_num: ch as i32, buffers: [ptr::null_mut(); 2] })
@@ -550,6 +634,7 @@ fn stream(
             sample_type_name(sample_type)
         ),
         valid_bits,
+        locked_rate,
     }));
     *opened = true;
 
@@ -563,6 +648,9 @@ fn stream(
     let mut msg = Msg { hwnd: 0, message: 0, wparam: 0, lparam: 0, time: 0, pt: [0; 2], private: 0 };
     let buffer_time = Duration::from_secs_f64(buffer_size as f64 / rate as f64);
     while !ctrl.stopped() && !st.finished.load(Ordering::Acquire) {
+        if PANEL_REQUEST.swap(false, Ordering::AcqRel) {
+            unsafe { (drv.vt().control_panel)(drv.0) };
+        }
         if st.reset_requested.load(Ordering::Acquire) {
             unsafe { (drv.vt().stop)(drv.0) };
             bail!("the ASIO driver requested a reset (settings changed or device unplugged)");

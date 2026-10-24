@@ -189,15 +189,22 @@ export interface SignalPath {
   bit_perfect: boolean
   kind: PathKind
   fallbacks: string[]
+  /** Rate sent to the device (DSD bit rate for native DSD, PCM rate for DoP). */
+  stream_rate: number
+  /** Rate the device reports it is running at, when it can tell. */
+  locked_rate?: number | null
 }
 
 export type Backend = 'wasapi' | 'asio'
 export type DsdMode = 'auto' | 'native' | 'dop' | 'pcm'
 
+export type BufferSize = 'small' | 'normal' | 'large'
+
 export interface PlayOptions {
   backend: Backend
   device?: string | null
   dsd_mode: DsdMode
+  buffer?: BufferSize
 }
 
 export interface PlayerState {
@@ -217,6 +224,12 @@ export interface PlayerState {
   sleep?: { endOfTrack: boolean; remaining?: number | null } | null
   /** The DAC went away; the player is waiting for it. */
   reconnecting: boolean
+  /** A one-off message ("DAC switched to DSD128"); noticeId changes for each new one. */
+  notice?: string | null
+  noticeId: number
+  dropoutsSession: number
+  lastDropout?: string | null
+  fallback?: PlayOptions | null
 }
 
 export type Repeat = 'off' | 'all' | 'one'
@@ -243,7 +256,37 @@ export interface DeviceInfo {
 
 export type StreamQuality = 'max' | 'cd' | 'lossy'
 
+export interface DeviceProfile {
+  dsdMode: DsdMode
+  buffer: BufferSize
+}
+
+export type Verdict =
+  | { kind: 'trueHiRes' }
+  | { kind: 'upsampled'; cutoff_hz: number }
+  | { kind: 'paddedBits'; real_bits: number }
+  | { kind: 'lossySource'; cutoff_hz: number }
+  | { kind: 'cd' }
+  | { kind: 'dsd' }
+  | { kind: 'lossy' }
+
+export interface Analysis {
+  dr?: number | null
+  lufs?: number | null
+  peakDb: number
+  bitsUsed?: number | null
+  cutoffHz?: number | null
+  verdict: Verdict
+}
+
+export interface TrackAnalysis {
+  track: Track
+  analysis?: Analysis | null
+}
+
 export interface Settings {
+  devices: Record<string, DeviceProfile>
+  fallback?: PlayOptions | null
   output: PlayOptions
   streamQuality: StreamQuality
   desktop: DesktopSettings
@@ -358,6 +401,12 @@ export const api = {
   devices: () => invoke<DeviceInfo[]>('list_devices'),
   settings: () => invoke<Settings>('get_settings'),
   setOutput: (output: PlayOptions) => invoke<void>('set_output', { output }),
+  switchDevice: (backend: Backend, device: string | null) => invoke<PlayOptions>('switch_device', { backend, device }),
+  setFallback: (fallback: PlayOptions | null) => invoke<void>('set_fallback', { fallback }),
+  asioControlPanel: (device: string | null) => invoke<void>('asio_control_panel', { device }),
+  selfTest: () => invoke<SignalPath>('self_test'),
+  albumAnalysis: (id: number) => invoke<TrackAnalysis[]>('album_analysis', { id }),
+  analyseAlbums: (ids: number[] | null) => invoke<number>('analyse_albums', { ids }),
   setStreamQuality: (quality: StreamQuality) => invoke<void>('set_stream_quality', { quality }),
   setDesktop: (desktop: DesktopSettings) => invoke<void>('set_desktop', { desktop }),
 
@@ -399,6 +448,34 @@ export type PlayerCommand =
   | { type: 'setSleep'; timer: SleepTimer | null }
 
 // ---- Helpers -------------------------------------------------------------------
+
+/** "96 kHz", "DSD128", "2.8 MHz" for a device rate. */
+export function rateLabel(hz: number): string {
+  if (hz >= 2_000_000) return `DSD${Math.round(hz / 44_100)}`
+  const k = hz / 1000
+  return `${Number.isInteger(k) ? k : k.toFixed(1)} kHz`
+}
+
+/** Short badge text and tone for an analysis verdict. */
+export function verdictBadge(v: Verdict): { text: string; tone: 'good' | 'warn' | 'plain'; title: string } {
+  const k = (hz: number) => `${(hz / 1000).toFixed(1)} kHz`
+  switch (v.kind) {
+    case 'trueHiRes':
+      return { text: 'True hi-res', tone: 'good', title: 'Real musical content above 22 kHz' }
+    case 'upsampled':
+      return { text: 'Upsampled', tone: 'warn', title: `Nothing above ${k(v.cutoff_hz)}: probably made from a CD-rate master` }
+    case 'paddedBits':
+      return { text: `Really ${v.real_bits}-bit`, tone: 'warn', title: `The extra bits are always zero; only ${v.real_bits} bits carry music` }
+    case 'lossySource':
+      return { text: 'Lossy source?', tone: 'warn', title: `Sharp cutoff at ${k(v.cutoff_hz)}: likely converted from MP3/AAC` }
+    case 'cd':
+      return { text: 'CD quality', tone: 'plain', title: 'Genuine 16-bit / CD-rate content' }
+    case 'dsd':
+      return { text: 'DSD', tone: 'plain', title: 'DSD recording' }
+    case 'lossy':
+      return { text: 'Lossy', tone: 'plain', title: 'Lossy format (MP3, AAC, …)' }
+  }
+}
 
 export function clock(secs?: number | null): string {
   if (secs == null || !isFinite(secs)) return '--:--'

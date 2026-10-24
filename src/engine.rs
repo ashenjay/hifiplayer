@@ -20,9 +20,10 @@ use crate::output::{self, Backend, Control, RunningOutput, StreamFormat};
 use crate::source::{Media, Source, SourceFormat, dsd_name, khz};
 
 /// How to play DSD files.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum DsdMode {
+    #[default]
     /// Native DSD on ASIO if the driver supports it, else DoP, else convert to PCM.
     Auto,
     /// Raw DSD through the ASIO DSD extension.
@@ -38,11 +39,13 @@ pub struct PlayOptions {
     pub backend: Backend,
     pub device: Option<String>,
     pub dsd_mode: DsdMode,
+    #[serde(default)]
+    pub buffer: crate::output::BufferSize,
 }
 
 impl Default for PlayOptions {
     fn default() -> Self {
-        Self { backend: Backend::Wasapi, device: None, dsd_mode: DsdMode::Auto }
+        Self { backend: Backend::Wasapi, device: None, dsd_mode: DsdMode::Auto, buffer: Default::default() }
     }
 }
 
@@ -173,6 +176,9 @@ pub struct SignalPath {
     pub kind: PathKind,
     /// Formats the device refused before one was accepted.
     pub fallbacks: Vec<String>,
+    /// Rate the stream needs (DSD bit rate for native DSD), and what the DAC reports.
+    pub stream_rate: u32,
+    pub locked_rate: Option<u32>,
 }
 
 /// Called when a track ends: given the index that finished, returns the next
@@ -305,7 +311,7 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
 
     let mut fallbacks = Vec::new();
     for (plan, src_ch) in plans(format, opts)? {
-        let ctrl = Arc::new(Control::default());
+        let ctrl = Arc::new(Control { buffer: opts.buffer, ..Control::default() });
         // One second of audio in the ring buffer; live Spotify audio uses a
         // quarter second so pause and seek in the Spotify app react quickly.
         let secs = if matches!(source, Source::Live(_)) { 0.25 } else { 1.0 };
@@ -330,6 +336,10 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
                     bit_perfect,
                     kind: plan.kind(),
                     fallbacks,
+                    stream_rate: match plan.stream_format() {
+                        StreamFormat::Pcm { rate, .. } | StreamFormat::NativeDsd { rate, .. } => rate,
+                    },
+                    locked_rate: output.info.locked_rate,
                 };
                 let shared = Arc::new(Shared::default());
                 shared.boundaries.lock().unwrap().push(Boundary { start_frame: 0, index, duration });

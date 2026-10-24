@@ -4,7 +4,8 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useRef, useState } from 'react'
 import {
   api, inTauri, listen,
-  type AccountStatus, type Backend, type DesktopSettings, type DeviceInfo, type DeviceLogin, type DsdMode, type PlayOptions, type ScanReport, type StreamQuality,
+  type AccountStatus, type Backend, type BufferSize, type DesktopSettings, type DeviceInfo, type DeviceLogin, type DsdMode, type PlayOptions,
+  type ScanReport, type SignalPath, type StreamQuality,
 } from '../api'
 import { ErrorBox, Loading, useLoad } from '../components/common'
 import { useNav } from '../nav'
@@ -17,6 +18,7 @@ export function SettingsPage() {
       <div className="page-head"><h1>Settings</h1></div>
       <AudioSettings />
       <LibrarySettings />
+      <AnalysisSettings />
       <StreamingSettings />
       <RemoteCard />
       <WindowsSettings />
@@ -88,9 +90,16 @@ function AudioSettings() {
   const [devices, setDevices] = useState<DeviceInfo[]>()
   const [probing, setProbing] = useState(false)
   const [opts, setOpts] = useState<PlayOptions>()
+  const [saved, setSaved] = useState<PlayOptions>()
+  const [fallback, setFallback] = useState<PlayOptions | null>(null)
+  const [testing, setTesting] = useState(false)
 
   useEffect(() => {
-    if (settings && !opts) setOpts(settings.output)
+    if (settings && !opts) {
+      setOpts(settings.output)
+      setSaved(settings.output)
+      setFallback(settings.fallback ?? null)
+    }
   }, [settings, opts])
 
   const probe = () => {
@@ -102,7 +111,20 @@ function AudioSettings() {
   if (!opts) return <section className="card"><Loading /></section>
   const list = (devices ?? []).filter((d) => d.backend === opts.backend)
   const selected = list.find((d) => d.name === opts.device)
-  const changed = JSON.stringify(opts) !== JSON.stringify(settings?.output)
+  const changed = JSON.stringify(opts) !== JSON.stringify(saved)
+
+  // Picking a device brings back the DSD mode and buffer last used with it.
+  const chooseDevice = (backend: Backend, device: string | null) => {
+    const profile = settings?.devices?.[`${backend}:${device ?? ''}`]
+    setOpts({ ...opts, backend, device, ...(profile ? { dsd_mode: profile.dsdMode, buffer: profile.buffer } : {}) })
+  }
+  const fallbackKey = fallback ? `${fallback.backend}|${fallback.device ?? ''}` : ''
+  const chooseFallback = (key: string) => {
+    const d = (devices ?? []).find((d) => `${d.backend}|${d.name}` === key)
+    const next: PlayOptions | null = d ? { backend: d.backend, device: d.name, dsd_mode: 'auto', buffer: 'normal' } : null
+    setFallback(next)
+    api.setFallback(next).then(() => toast(next ? `Fallback device: ${next.device}` : 'No fallback device')).catch((e) => toast(String(e)))
+  }
 
   return (
     <section className="card">
@@ -114,7 +136,7 @@ function AudioSettings() {
         <label>Output type</label>
         <div className="segmented">
           {(['wasapi', 'asio'] as Backend[]).map((b) => (
-            <button key={b} className={opts.backend === b ? 'on' : ''} onClick={() => setOpts({ ...opts, backend: b, device: null })}>
+            <button key={b} className={opts.backend === b ? 'on' : ''} onClick={() => chooseDevice(b, null)}>
               {b === 'wasapi' ? 'WASAPI Exclusive' : 'ASIO'}
             </button>
           ))}
@@ -122,13 +144,21 @@ function AudioSettings() {
 
         <label>Device</label>
         <div className="row">
-          <select value={opts.device ?? ''} onChange={(e) => setOpts({ ...opts, device: e.target.value || null })}>
+          <select value={opts.device ?? ''} onChange={(e) => chooseDevice(opts.backend, e.target.value || null)}>
             {opts.backend === 'wasapi' && <option value="">Windows default device</option>}
             {opts.backend === 'asio' && !opts.device && <option value="">Choose an ASIO driver…</option>}
             {list.map((d) => <option key={d.name} value={d.name}>{d.name}</option>)}
             {opts.device && !selected && <option value={opts.device}>{opts.device}</option>}
           </select>
           <button onClick={probe} disabled={probing}>{probing ? 'Scanning…' : 'Refresh'}</button>
+          {opts.backend === 'asio' && opts.device && (
+            <button
+              title="The driver's own settings: buffer, clock source, DSD options"
+              onClick={() => api.asioControlPanel(opts.device ?? null).catch((e) => toast(String(e)))}
+            >
+              Driver control panel
+            </button>
+          )}
         </div>
         {selected && (<><span /><div className="muted small">{selected.details}</div></>)}
 
@@ -139,17 +169,154 @@ function AudioSettings() {
           <option value="dop">DoP (DSD over PCM)</option>
           <option value="pcm">Convert DSD to PCM</option>
         </select>
+
+        <label>Buffer size</label>
+        <div>
+          <select value={opts.buffer ?? 'normal'} onChange={(e) => setOpts({ ...opts, buffer: e.target.value as BufferSize })}>
+            <option value="small">Small (lowest latency)</option>
+            <option value="normal">Normal</option>
+            <option value="large">Large (for dropouts on a busy PC)</option>
+          </select>
+          <div className="muted small">Remembered per device, together with the DSD setting. It never changes the sound.</div>
+        </div>
+
+        <label>If unavailable</label>
+        <div>
+          <select value={fallbackKey} onChange={(e) => chooseFallback(e.target.value)}>
+            <option value="">Show an error</option>
+            {(devices ?? []).map((d) => (
+              <option key={d.backend + d.name} value={`${d.backend}|${d.name}`}>
+                Play on {d.name} ({d.backend === 'asio' ? 'ASIO' : 'WASAPI'})
+              </option>
+            ))}
+            {fallback && !(devices ?? []).some((d) => `${d.backend}|${d.name}` === fallbackKey) && (
+              <option value={fallbackKey}>Play on {fallback.device}</option>
+            )}
+          </select>
+          <div className="muted small">Used when the DAC is switched off, unplugged or busy.</div>
+        </div>
       </div>
       <div className="actions">
         <button
           className="primary"
           disabled={!changed || (opts.backend === 'asio' && !opts.device)}
-          onClick={() => api.setOutput(opts).then(() => toast('Audio output saved')).catch((e) => toast(String(e)))}
+          onClick={() =>
+            api.setOutput(opts).then(() => { setSaved(opts); toast('Audio output saved') }).catch((e) => toast(String(e)))
+          }
         >
           Apply
         </button>
+        <button disabled={changed} title={changed ? 'Apply your changes first' : ''} onClick={() => setTesting(true)}>
+          Bit-perfect self-test
+        </button>
         {opts.backend === 'asio' && !opts.device && <span className="muted small">Choose a driver to use ASIO.</span>}
       </div>
+      {testing && <SelfTest onClose={() => setTesting(false)} />}
+    </section>
+  )
+}
+
+/** Plays a quiet DSD tone as DoP: a DAC only shows "DSD" if every bit arrived untouched. */
+function SelfTest({ onClose }: { onClose: () => void }) {
+  const [phase, setPhase] = useState<'intro' | 'playing' | 'ask' | 'pass' | 'fail'>('intro')
+  const [path, setPath] = useState<SignalPath>()
+  const [error, setError] = useState<string>()
+  const run = () => {
+    setPhase('playing')
+    setError(undefined)
+    api.selfTest().then((p) => { setPath(p); setPhase('ask') }).catch((e) => { setError(String(e)); setPhase('intro') })
+  }
+  return (
+    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && phase !== 'playing' && onClose()}>
+      <div className="overlay-card" onMouseDown={(e) => e.stopPropagation()}>
+        <h3>Bit-perfect self-test</h3>
+        {phase === 'intro' && (
+          <>
+            <p>
+              This stops playback and sends a quiet DSD test tone to your DAC as DoP for 6 seconds. DoP only works when
+              every bit reaches the DAC unchanged, so it proves the whole path is bit-perfect.
+            </p>
+            <p className="muted small">You may hear a faint tone. Watch your DAC's display or indicator light while it plays.</p>
+            {error && <ErrorBox error={error} />}
+            <div className="actions">
+              <button className="primary" onClick={run}>Start test</button>
+              <button onClick={onClose}>Cancel</button>
+            </div>
+          </>
+        )}
+        {phase === 'playing' && <p>Playing the test tone… look at your DAC now.</p>}
+        {phase === 'ask' && (
+          <>
+            <p>Did your DAC show <b>DSD</b> (or DSD64 / 2.8 MHz) while the tone played?</p>
+            {path && <p className="muted small">{path.output}</p>}
+            <div className="actions">
+              <button className="primary" onClick={() => setPhase('pass')}>Yes, it showed DSD</button>
+              <button onClick={() => setPhase('fail')}>No, it showed PCM or nothing</button>
+              <button onClick={run}>Play again</button>
+            </div>
+          </>
+        )}
+        {phase === 'pass' && (
+          <>
+            <p>✓ Your playback path is bit-perfect. Every bit the player sends reaches the DAC unchanged.</p>
+            <div className="actions"><button className="primary" onClick={onClose}>Done</button></div>
+          </>
+        )}
+        {phase === 'fail' && (
+          <>
+            <p>Something between the player and the DAC is changing the data. Things to check:</p>
+            <ul className="small">
+              <li>Your DAC supports DoP (most DSD-capable USB DACs do; some only support native DSD via ASIO).</li>
+              <li>The DAC's driver or control panel has no volume, EQ or "sound enhancement" turned on.</li>
+              <li>With WASAPI: turn off audio enhancements in the device's Windows sound properties.</li>
+              <li>With ASIO: try the manufacturer's own driver rather than a generic one.</li>
+            </ul>
+            <div className="actions">
+              <button onClick={run}>Test again</button>
+              <button className="primary" onClick={onClose}>Close</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---- Audio analysis ----------------------------------------------------------------
+
+function AnalysisSettings() {
+  const { toast } = useNav()
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string }>()
+  const [running, setRunning] = useState(false)
+  useEffect(() => {
+    const un = listen<{ done: number; total: number; current: string }>('analysis-progress', setProgress)
+    return () => { un.then((f) => f()) }
+  }, [])
+  const run = () => {
+    setRunning(true)
+    api
+      .analyseAlbums(null)
+      .then((n) => toast(n ? `Analysed ${n} tracks` : 'Every track is already analysed'))
+      .catch((e) => toast(String(e)))
+      .finally(() => setRunning(false))
+  }
+  const pct = progress && progress.total ? Math.floor((progress.done / progress.total) * 100) : 0
+  return (
+    <section className="card">
+      <h2>Audio analysis</h2>
+      <p className="muted">
+        Measures dynamic range (DR), loudness (LUFS) and real bit depth, and spots "fake hi-res" files that were
+        upsampled from CD or made from MP3. It only reads your files; nothing is changed.
+      </p>
+      <div className="actions">
+        <button className="primary" disabled={running} onClick={run}>{running ? 'Analysing…' : 'Analyse library'}</button>
+        {running && progress && progress.total > 0 && (
+          <span className="muted small">
+            {pct}% · {Math.floor(progress.done)}/{progress.total} {progress.current}
+          </span>
+        )}
+      </div>
+      <p className="muted small">Takes a few seconds per track. You can keep listening while it runs.</p>
     </section>
   )
 }

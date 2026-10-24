@@ -286,3 +286,18 @@ kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-w
 .toast { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; box-shadow: 0 10px 30px #000a; cursor: pointer; white-space: pre-wrap; }
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: #2e2e36; border-radius: 5px; border: 2px solid var(--bg); }
+
+/* Batch 4: audiophile tools */
+.sp-dac { margin-top: 10px; }
+.dac-rate { font-variant-numeric: tabular-nums; padding: 0 4px; }
+.device-menu { min-width: 300px; max-height: 360px; overflow-y: auto; }
+.device-menu button { gap: 8px; text-align: left; }
+.device-menu button.active { color: var(--accent); }
+.menu-note { padding: 6px 10px; }
+.badge-good { background: #10331f; color: #86efac; }
+.badge-warn { background: #3b2410; color: #fdba74; }
+.analysis-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.analysis-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.analysis-table td, .analysis-table th { padding: 4px 8px; text-align: left; font-size: 12px; border-bottom: 1px solid var(--line); }
+.analysis-table th { color: var(--muted); font-weight: 500; }
+.analysis-table td:not(:first-child), .analysis-table th { white-space: nowrap; }

@@ -15,7 +15,7 @@ use wasapi::{
     WaveFormat, calculate_period_100ns, initialize_mta,
 };
 
-use super::{Backend, Control, DeviceInfo, OpenInfo, StreamFormat, wait_for_prefill};
+use super::{Backend, BufferSize, Control, DeviceInfo, OpenInfo, StreamFormat, wait_for_prefill};
 use crate::source::khz;
 
 const AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED: i32 = 0x8889_0019_u32 as i32;
@@ -93,7 +93,7 @@ struct Opened {
     period_hns: i64,
 }
 
-fn open(device: &Device, rate: u32, channels: usize, min_valid_bits: u32) -> Result<Opened> {
+fn open(device: &Device, rate: u32, channels: usize, min_valid_bits: u32, buffer: BufferSize) -> Result<Opened> {
     let probe = device.get_iaudioclient()?;
     let mut chosen = None;
     for &(store, valid) in candidates(min_valid_bits) {
@@ -115,13 +115,18 @@ fn open(device: &Device, rate: u32, channels: usize, min_valid_bits: u32) -> Res
     let period_hns = probe.calculate_aligned_period_near(default_period, Some(128), &format)?;
     drop(probe);
 
-    // A large buffer (16 periods) absorbs scheduling hiccups; latency doesn't matter for playback.
-    let mode = |p: i64| StreamMode::PollingExclusive { period_hns: p, buffer_duration_hns: 16 * p };
+    // Several periods of buffer absorb scheduling hiccups; latency doesn't matter for playback.
+    let periods = match buffer {
+        BufferSize::Small => 4,
+        BufferSize::Normal => 16,
+        BufferSize::Large => 48,
+    };
+    let mode = |p: i64| StreamMode::PollingExclusive { period_hns: p, buffer_duration_hns: periods * p };
     let mut client = device.get_iaudioclient()?;
     match client.initialize_client(&format, &Direction::Render, &mode(period_hns)) {
         Ok(()) => Ok(Opened { client, format, store_bits, period_hns }),
         Err(WasapiError::Windows(e)) if e.code().0 == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED => {
-            let frames = client.get_buffer_size()? as i64 / 16;
+            let frames = client.get_buffer_size()? as i64 / periods;
             let aligned = calculate_period_100ns(frames, rate as i64);
             let mut client = device.get_iaudioclient()?;
             client.initialize_client(&format, &Direction::Render, &mode(aligned))?;
@@ -153,7 +158,7 @@ pub fn run(
         let enumerator = DeviceEnumerator::new()?;
         let dev = find_device(&enumerator, device.as_deref())?;
         let name = dev.get_friendlyname()?;
-        Ok((open(&dev, rate, channels, min_valid_bits)?, name))
+        Ok((open(&dev, rate, channels, min_valid_bits, ctrl.buffer)?, name))
     })();
     let (opened, name) = match opened {
         Ok(v) => v,
@@ -173,6 +178,7 @@ pub fn run(
             khz(rate)
         ),
         valid_bits,
+        locked_rate: Some(rate as u32),
     }));
 
     let client = opened.client;

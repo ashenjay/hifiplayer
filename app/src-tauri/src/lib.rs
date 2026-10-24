@@ -150,6 +150,67 @@ async fn convert_album(app: tauri::AppHandle, state: State<'_, AppState>, id: i6
     .await
 }
 
+// ---- Audio analysis (DR, loudness, fake hi-res) ------------------------------------
+
+static ANALYSING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Serialize)]
+struct TrackAnalysis {
+    track: Track,
+    analysis: Option<hifiplayer::analysis::Analysis>,
+}
+
+#[tauri::command]
+async fn album_analysis(state: State<'_, AppState>, id: i64) -> Res<Vec<TrackAnalysis>> {
+    let rows = state.library.lock().unwrap().album_analysis(id).map_err(anyhow_err)?;
+    Ok(rows.into_iter().map(|(track, analysis)| TrackAnalysis { track, analysis }).collect())
+}
+
+/// Analyse albums (or, with no ids, every album not analysed yet) in the
+/// background, reporting "analysis-progress" events. Returns tracks analysed.
+#[tauri::command]
+async fn analyse_albums(app: tauri::AppHandle, ids: Option<Vec<i64>>) -> Res<usize> {
+    use std::sync::atomic::Ordering;
+    if ANALYSING.swap(true, Ordering::SeqCst) {
+        return Err("An analysis is already running.".into());
+    }
+    let result = blocking(move || {
+        // A separate connection, so browsing stays responsive.
+        let lib = Library::open_default().map_err(anyhow_err)?;
+        let ids = match ids {
+            Some(ids) => ids,
+            None => lib.albums_needing_analysis().map_err(anyhow_err)?,
+        };
+        let mut tracks = Vec::new();
+        for id in &ids {
+            for (t, done) in lib.album_analysis(*id).map_err(anyhow_err)? {
+                if done.is_none() {
+                    tracks.push((*id, t));
+                }
+            }
+        }
+        let total = tracks.len();
+        for (i, (album, t)) in tracks.iter().enumerate() {
+            let emit = |frac: f64| {
+                let _ = app.emit(
+                    "analysis-progress",
+                    serde_json::json!({ "done": i as f64 + frac, "total": total, "current": t.title, "album": album }),
+                );
+            };
+            emit(0.0);
+            match hifiplayer::analysis::analyse(&t.media(), &emit) {
+                Ok(a) => lib.save_analysis(t, &a).map_err(anyhow_err)?,
+                Err(e) => eprintln!("analysis of {}: {e:#}", t.path.display()),
+            }
+        }
+        let _ = app.emit("analysis-progress", serde_json::json!({ "done": total, "total": total, "current": "" }));
+        Ok(total)
+    })
+    .await;
+    ANALYSING.store(false, Ordering::SeqCst);
+    result
+}
+
 // ---- Favourites, ratings, history ------------------------------------------------
 
 #[tauri::command]
@@ -403,10 +464,69 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 #[tauri::command]
 fn set_output(state: State<'_, AppState>, output: PlayOptions) -> Res<()> {
     let mut s = state.settings.lock().unwrap();
-    s.output = output.clone();
+    s.set_output(output.clone());
     s.save().map_err(anyhow_err)?;
     state.player.send(Command::SetOptions(output));
     Ok(())
+}
+
+/// Switch to another output device, restoring its remembered DSD mode and buffer.
+#[tauri::command]
+fn switch_device(state: State<'_, AppState>, backend: hifiplayer::output::Backend, device: Option<String>) -> Res<PlayOptions> {
+    let mut s = state.settings.lock().unwrap();
+    let opts = s.switch_output(backend, device);
+    s.save().map_err(anyhow_err)?;
+    state.player.send(Command::SetOptions(opts.clone()));
+    Ok(opts)
+}
+
+#[tauri::command]
+fn set_fallback(state: State<'_, AppState>, fallback: Option<PlayOptions>) -> Res<()> {
+    let mut s = state.settings.lock().unwrap();
+    s.fallback = fallback.clone();
+    s.save().map_err(anyhow_err)?;
+    state.player.send(Command::SetFallback(fallback));
+    Ok(())
+}
+
+/// Open the ASIO driver's own control panel (buffer, clock and DSD settings).
+#[tauri::command]
+async fn asio_control_panel(device: Option<String>) -> Res<()> {
+    blocking(move || hifiplayer::output::asio::open_control_panel(device).map_err(anyhow_err)).await
+}
+
+/// Bit-perfect self-test: plays a quiet DSD64 tone as DoP for a few seconds.
+/// DoP only reaches the DAC as DSD when every bit arrives untouched, so if
+/// the DAC's display shows DSD the whole path is bit-perfect.
+#[tauri::command]
+async fn self_test(state: State<'_, AppState>) -> Res<hifiplayer::engine::SignalPath> {
+    let player = state.player.clone();
+    let mut opts = state.settings.lock().unwrap().output.clone();
+    opts.dsd_mode = hifiplayer::engine::DsdMode::Dop;
+    blocking(move || {
+        player.send(Command::Stop);
+        let t0 = std::time::Instant::now();
+        while player.state().status != Status::Stopped && t0.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let path = std::env::temp_dir().join("hifiplayer-selftest.dsf");
+        hifiplayer::testsignal::write_dsf(&path, 2_822_400, 6.0).map_err(err)?;
+        let playback = hifiplayer::engine::play(&path, &opts).map_err(anyhow_err)?;
+        let signal = playback.path.clone();
+        let t0 = std::time::Instant::now();
+        while !playback.is_finished() && t0.elapsed() < Duration::from_secs(8) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        playback.stop();
+        let underruns = playback.underruns();
+        playback.wait().map_err(anyhow_err)?;
+        let _ = std::fs::remove_file(&path);
+        if underruns > 0 {
+            return Err(format!("The test played with {underruns} dropouts; try a larger buffer size."));
+        }
+        Ok(signal)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -550,6 +670,7 @@ pub fn run() {
     set_stream_resolver(services.clone());
     let library = Library::open_default().expect("cannot open the music library database");
     let player = Player::new(settings.output.clone());
+    player.send(Command::SetFallback(settings.fallback.clone()));
     let p = player.clone();
     spotify::init(move |ev| p.send(Command::Spotify(ev)));
     let remote = remote::Remote::new(player.clone());
@@ -676,6 +797,12 @@ pub fn run() {
             playlist_import,
             album_extras,
             convert_album,
+            album_analysis,
+            analyse_albums,
+            switch_device,
+            set_fallback,
+            asio_control_panel,
+            self_test,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app")

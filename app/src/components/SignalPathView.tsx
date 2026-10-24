@@ -1,4 +1,4 @@
-import type { SignalPath } from '../api'
+import { rateLabel, type SignalPath } from '../api'
 
 /**
  * Roon-style signal path: each stage gets a quality dot.
@@ -16,7 +16,31 @@ export function quality(path: SignalPath): { level: 'lossless' | 'high' | 'low';
   return { level: 'high', label: 'High quality · converted' }
 }
 
-export function SignalPathView({ path }: { path: SignalPath }) {
+/** The rate the DAC actually runs at, checked against the rate we sent. */
+function DacRate({ path }: { path: SignalPath }) {
+  if (!path.stream_rate) return null
+  const sent =
+    path.kind === 'dop' ? `${rateLabel(path.stream_rate)} carrying ${rateLabel(path.stream_rate * 16)}` : rateLabel(path.stream_rate)
+  if (path.locked_rate == null) return <div className="sp-dac small muted">Sent to DAC: {sent}</div>
+  const ok = Math.abs(path.locked_rate - path.stream_rate) <= 1
+  return ok ? (
+    <div className="sp-dac small">DAC locked at {sent} ✓</div>
+  ) : (
+    <div className="sp-dac small warn">
+      Sent {sent}, but the device reports {rateLabel(path.locked_rate)}: something is resampling.
+    </div>
+  )
+}
+
+export function SignalPathView({
+  path,
+  dropouts,
+  lastDropout,
+}: {
+  path: SignalPath
+  dropouts?: number
+  lastDropout?: string | null
+}) {
   const q = quality(path)
   const stages = [
     { title: 'Source', detail: path.source, level: /MP3|AAC|VORBIS|OGG|OPUS/i.test(path.source) ? 'low' : 'lossless' },
@@ -39,6 +63,12 @@ export function SignalPathView({ path }: { path: SignalPath }) {
           </li>
         ))}
       </ol>
+      <DacRate path={path} />
+      {!!dropouts && (
+        <div className="sp-dac small warn" title="Try a larger buffer size in Settings > Audio">
+          {dropouts} dropouts this session{lastDropout ? `, last during "${lastDropout}"` : ''}
+        </div>
+      )}
       {path.fallbacks.length > 0 && (
         <details className="sp-fallbacks">
           <summary>Formats the device refused ({path.fallbacks.length})</summary>

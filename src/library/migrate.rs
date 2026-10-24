@@ -4,7 +4,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-pub const VERSION: i64 = 3;
+pub const VERSION: i64 = 4;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -63,6 +63,18 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         // MQA: NULL = not MQA, 0 = MQA with unknown original rate.
         add_columns(conn, "tracks", &[("mqa_rate", "INTEGER")])?;
         conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_full_rescan', '1')", [])?;
+        conn.execute("PRAGMA user_version = 3", [])?;
+    }
+    if version < 4 {
+        // Measurements (DR, loudness, bits, cutoff), keyed like tracks.path.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS analysis (
+                 path TEXT PRIMARY KEY,
+                 mtime INTEGER NOT NULL,
+                 size INTEGER NOT NULL,
+                 result TEXT NOT NULL
+             );",
+        )?;
         conn.execute(&format!("PRAGMA user_version = {VERSION}"), [])?;
     }
     Ok(())

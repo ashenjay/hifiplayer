@@ -37,7 +37,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let dir = args.next().expect("test-files dir");
     let dir = Path::new(&dir);
-    let opts = PlayOptions { backend: Backend::Asio, device: args.next(), dsd_mode: DsdMode::Auto };
+    let opts = PlayOptions { backend: Backend::Asio, device: args.next(), dsd_mode: DsdMode::Auto, buffer: Default::default() };
     let player = Player::new(opts.clone());
     let queue = vec![item(dir, "tone_16bit_44k.wav"), item(dir, "tone_24bit_192k.wav"), item(dir, "tone_dsd64.dsf")];
     let check = |name: &str, ok: bool| println!("{} {name}", if ok { "PASS" } else { "FAIL" });
