@@ -223,13 +223,22 @@ async fn analyse_albums(app: tauri::AppHandle, ids: Option<Vec<i64>>) -> Res<usi
 // ---- Lyrics and tag editor ---------------------------------------------------------
 
 #[tauri::command]
-async fn track_lyrics(media: Media) -> Res<Option<Lyrics>> {
+async fn track_lyrics(state: State<'_, AppState>, item: QueueItem) -> Res<Option<Lyrics>> {
+    let online = state.settings.lock().unwrap().online.lyrics;
     blocking(move || {
-        Ok(match media {
+        // The song's own lyrics (.lrc file or tags) come first.
+        let own = match &item.media {
             // Cue-sheet tracks: lyrics files are timed from the start of the whole file.
-            Media::File { path, start, .. } => hifiplayer::library::tags::read_lyrics(&path, -start.unwrap_or(0.0)),
+            Media::File { path, start, .. } => hifiplayer::library::tags::read_lyrics(path, -start.unwrap_or(0.0)),
             _ => None,
-        })
+        };
+        if own.is_some() || !online {
+            return Ok(own);
+        }
+        let Some(artist) = item.artist.as_deref().filter(|a| !a.trim().is_empty()) else { return Ok(None) };
+        // Offline or LRCLIB unreachable: just no lyrics this time.
+        let text = hifiplayer::online::lrclib::find(artist, &item.title, item.album.as_deref(), item.duration).ok().flatten();
+        Ok(text.map(|t| hifiplayer::library::tags::parse(&t, "LRCLIB", 0.0)))
     })
     .await
 }

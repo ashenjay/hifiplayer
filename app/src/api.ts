@@ -312,6 +312,7 @@ export interface TagEdit {
 
 export interface OnlineSettings {
   lookupInfo: boolean
+  lyrics: boolean
   discord: boolean
   discordAppId: string
   dlnaRenderer: boolean
@@ -480,7 +481,7 @@ export const api = {
   selfTest: () => invoke<SignalPath>('self_test'),
   albumAnalysis: (id: number) => invoke<TrackAnalysis[]>('album_analysis', { id }),
   analyseAlbums: (ids: number[] | null) => invoke<number>('analyse_albums', { ids }),
-  trackLyrics: (media: Media) => invoke<Lyrics | null>('track_lyrics', { media }),
+  trackLyrics: (item: QueueItem) => invoke<Lyrics | null>('track_lyrics', { item }),
   libraryTracks: (ids: number[]) => invoke<Track[]>('library_tracks', { ids }),
   editTags: (ids: number[], edit: TagEdit) => invoke<number>('edit_tags', { ids, edit }),
   itemsForPaths: (paths: string[]) => invoke<QueueItem[]>('items_for_paths', { paths }),

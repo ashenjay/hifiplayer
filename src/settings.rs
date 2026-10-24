@@ -41,6 +41,8 @@ pub struct Settings {
 pub struct OnlineSettings {
     /// Fetch missing covers and artist biographies from MusicBrainz / Wikipedia.
     pub lookup_info: bool,
+    /// Find lyrics on LRCLIB when a song has none of its own.
+    pub lyrics: bool,
     pub discord: bool,
     /// Own application ID from discord.com/developers; empty = HiFi Player's.
     pub discord_app_id: String,
@@ -58,6 +60,7 @@ impl Default for OnlineSettings {
         let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PC".into());
         Self {
             lookup_info: true,
+            lyrics: true,
             discord: false,
             discord_app_id: String::new(),
             dlna_renderer: false,

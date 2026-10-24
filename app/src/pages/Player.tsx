@@ -111,12 +111,21 @@ function NowPlaying() {
         <div className="now-page-tools">
           <button onClick={() => window.dispatchEvent(new Event('tv-mode'))} title="Full-screen view (F)">TV mode</button>
           {inTauri && <button onClick={() => api.openMiniPlayer()} title="Small always-on-top player (M)">Mini player</button>}
-          {lyrics && <button className={showLyrics ? 'on' : ''} onClick={() => setShowLyrics((s) => !s)}>Lyrics</button>}
+          <button className={showLyrics ? 'on' : ''} onClick={() => setShowLyrics((s) => !s)}>Lyrics</button>
         </div>
-        {lyrics && showLyrics && (
+        {showLyrics && (
           <div className="card compact">
-            <h3>Lyrics <span className="muted small">· {lyrics.source}</span></h3>
-            <LyricsView lyrics={lyrics} position={player.position} />
+            <h3>Lyrics {lyrics && <span className="muted small">· {lyrics.source === 'LRCLIB' ? 'from LRCLIB' : lyrics.source}</span>}</h3>
+            {lyrics ? (
+              <LyricsView lyrics={lyrics} position={player.position} />
+            ) : lyrics === undefined ? (
+              <div className="muted small">Looking for lyrics…</div>
+            ) : (
+              <div className="muted small">
+                No lyrics found for this song. Put a <code>.lrc</code> file with the same name next to the music file, or
+                turn on online lyrics in Settings → Online &amp; network.
+              </div>
+            )}
           </div>
         )}
         {player.signalPath && (

@@ -24,7 +24,7 @@ export function OnlineCard() {
     setO(next)
     api.setOnline(next).then(setDlna).catch((e) => toast(String(e)))
   }
-  const Toggle = ({ k, label, hint }: { k: 'lookupInfo' | 'discord' | 'dlnaRenderer' | 'dlnaServer'; label: string; hint: string }) => (
+  const Toggle = ({ k, label, hint }: { k: 'lookupInfo' | 'lyrics' | 'discord' | 'dlnaRenderer' | 'dlnaServer'; label: string; hint: string }) => (
     <label className="toggle">
       <input type="checkbox" checked={o[k]} onChange={(e) => save({ [k]: e.target.checked })} />
       <span><b>{label}</b><br /><span className="muted small">{hint}</span></span>
@@ -39,6 +39,11 @@ export function OnlineCard() {
         hint="Looks up album and artist names on MusicBrainz, the Cover Art Archive and Wikipedia. Nothing else is sent."
       />
       {o.lookupInfo && <ArtSearch />}
+      <Toggle
+        k="lyrics"
+        label="Find lyrics online"
+        hint="When a song has no lyrics of its own, looks them up on LRCLIB (free, many synced to the music). Only the artist, title, album and length are sent."
+      />
 
       <h3 className="sub">Scrobbling</h3>
       <Scrobbling />

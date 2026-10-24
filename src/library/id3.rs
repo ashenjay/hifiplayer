@@ -20,6 +20,8 @@ pub struct Id3 {
     pub conductor: Option<String>,
     /// Front cover (or first picture): raw image bytes.
     pub picture: Option<Vec<u8>>,
+    /// Unsynchronised lyrics (USLT); may contain LRC time stamps.
+    pub lyrics: Option<String>,
 }
 
 /// Find and parse the ID3v2 tag of a DSF or DFF file.
@@ -121,6 +123,7 @@ pub fn parse(data: &[u8]) -> Option<Id3> {
                     tag.year = text(frame).and_then(|t| leading_number(&t)).filter(|y| *y > 1000);
                 }
             }
+            b"USLT" if tag.lyrics.is_none() => tag.lyrics = lyrics(frame),
             b"APIC" => {
                 if let Some((pic_type, img)) = picture(frame) {
                     if tag.picture.is_none() || pic_type == 3 {
@@ -140,6 +143,15 @@ fn text(frame: &[u8]) -> Option<String> {
     // Multiple values are NUL-separated; keep the first.
     let s = s.split('\0').next().unwrap_or("").trim().to_string();
     (!s.is_empty()).then_some(s)
+}
+
+/// USLT: encoding, 3-letter language, NUL-terminated description, then the text.
+fn lyrics(frame: &[u8]) -> Option<String> {
+    let (&enc, rest) = frame.split_first()?;
+    let s = decode(enc, rest.get(3..)?);
+    let (_, text) = s.split_once('\0')?;
+    let text = text.trim_matches(|c: char| c == '\0' || c == '\u{feff}' || c.is_whitespace()).to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 fn decode(enc: u8, b: &[u8]) -> String {
@@ -196,6 +208,18 @@ mod tests {
         v.extend_from_slice(&[0, 0]);
         v.extend_from_slice(body);
         v
+    }
+
+    #[test]
+    fn reads_lyrics_frame() {
+        let mut frames = frame(b"TIT2", b"\x00Song");
+        frames.extend(frame(b"USLT", b"\x03eng\x00[00:01.00]Hello\n[00:02.00]World"));
+        let mut data = b"ID3\x03\x00\x00".to_vec();
+        let n = frames.len();
+        data.extend_from_slice(&[(n >> 21) as u8 & 0x7f, (n >> 14) as u8 & 0x7f, (n >> 7) as u8 & 0x7f, n as u8 & 0x7f]);
+        data.extend(frames);
+        let tag = parse(&data).unwrap();
+        assert_eq!(tag.lyrics.as_deref(), Some("[00:01.00]Hello\n[00:02.00]World"));
     }
 
     #[test]

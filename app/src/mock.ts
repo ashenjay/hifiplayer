@@ -104,7 +104,7 @@ const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
     { backend: 'wasapi', name: 'Speakers (AMR HD+ USB Audio)', details: 'Exclusive mode, PCM up to 24/32-bit at 44.1–768 kHz' },
     { backend: 'asio', name: 'iFi USB Audio Device', details: '2 outputs, 32-bit int, native DSD: DSD64/DSD128/DSD256/DSD512' },
   ],
-  get_settings: () => ({ online: { lookupInfo: true, discord: false, discordAppId: '', dlnaRenderer: true, dlnaServer: false, dlnaName: 'HiFi Player (PC)', dlnaPort: 8897 }, devices: {}, fallback: null, output: state.options, streamQuality: 'max', desktop: { closeToTray: true, startWithWindows: false, globalHotkeys: true } }),
+  get_settings: () => ({ online: { lookupInfo: true, lyrics: true, discord: false, discordAppId: '', dlnaRenderer: true, dlnaServer: false, dlnaName: 'HiFi Player (PC)', dlnaPort: 8897 }, devices: {}, fallback: null, output: state.options, streamQuality: 'max', desktop: { closeToTray: true, startWithWindows: false, globalHotkeys: true } }),
   services_status: () => [
     { service: 'qobuz', configured: true, loggedIn: true, user: 'Demo user', plan: 'Studio' },
     { service: 'tidal', configured: false, loggedIn: false },

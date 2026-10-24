@@ -27,7 +27,12 @@ pub fn read_lyrics(path: &Path, offset: f64) -> Option<Lyrics> {
         return Some(parse(&text, "lrc file", offset));
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    if matches!(ext.as_str(), "dsf" | "dff" | "iso") {
+    if ext == "dsf" || ext == "dff" {
+        // DSD files keep their tags (and any lyrics) in an ID3 block.
+        let text = super::id3::read_dsd_tag(path)?.lyrics?;
+        return Some(parse(&text, "embedded", offset));
+    }
+    if ext == "iso" {
         return None;
     }
     let file = lofty::read_from_path(path).ok()?;
@@ -45,7 +50,8 @@ fn decode_text(b: &[u8]) -> String {
     }
 }
 
-fn parse(text: &str, source: &str, offset: f64) -> Lyrics {
+/// Lyrics from LRC or plain text; `offset` shifts the time stamps.
+pub fn parse(text: &str, source: &str, offset: f64) -> Lyrics {
     let mut synced = Vec::new();
     let mut lrc_offset = 0.0;
     for line in text.lines() {

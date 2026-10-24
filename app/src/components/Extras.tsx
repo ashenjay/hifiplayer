@@ -16,12 +16,13 @@ import { Cover, Icon } from './common'
 
 export function useLyrics(item?: QueueItem): Lyrics | null | undefined {
   const [lyrics, setLyrics] = useState<Lyrics | null>()
-  const key = item ? JSON.stringify(item.media) : ''
+  // Spotify keeps the same media for every song, so the title is part of the key.
+  const key = item ? JSON.stringify([item.media, item.title, item.artist]) : ''
   useEffect(() => {
-    if (!item || item.media.kind !== 'file') return setLyrics(null)
+    if (!item) return setLyrics(null)
     let alive = true
     setLyrics(undefined)
-    api.trackLyrics(item.media).then((l) => alive && setLyrics(l)).catch(() => alive && setLyrics(null))
+    api.trackLyrics(item).then((l) => alive && setLyrics(l)).catch(() => alive && setLyrics(null))
     return () => { alive = false }
   }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
   return lyrics
