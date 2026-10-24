@@ -55,6 +55,14 @@ const tracksFull = tracks.map((t) => ({ ...t, rating: t.trackNo === 1 ? 5 : 0, f
 
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
   album_extras: () => [],
+  cover_colors: () => ['#3f6d4e', '#c9a34a'],
+  track_lyrics: () => ({
+    source: 'lrc file',
+    synced: [[0, 'On a dark desert highway'], [6, 'Cool wind in my hair'], [12, 'Warm smell of colitas'], [80, 'Rising up through the air'], [86, 'Up ahead in the distance'], [92, 'I saw a shimmering light']],
+  }),
+  library_tracks: (args) => tracksFull.filter((t) => (args?.ids as number[]).includes(t.id)),
+  edit_tags: (args) => (args?.ids as number[]).length,
+  items_for_paths: () => [],
   album_analysis: () => tracksFull.slice(0, 4).map((t, i) => ({
     track: t,
     analysis: { dr: 12 - i, lufs: -14 + i, peakDb: -0.3, bitsUsed: 24, cutoffHz: 21000, verdict: i === 2 ? { kind: 'upsampled', cutoff_hz: 21000 } : { kind: 'trueHiRes' } },

@@ -11,7 +11,9 @@ use hifiplayer::library::{
 };
 use hifiplayer::output::{self, DeviceInfo};
 use hifiplayer::player::{Command, Player, PlayerState, QueueItem, Repeat, SleepTimer, Status};
-use hifiplayer::settings::{DesktopSettings, Settings, StreamQuality};
+use hifiplayer::library::tags::{Lyrics, TagEdit};
+use hifiplayer::settings::{Appearance, DesktopSettings, Settings, StreamQuality};
+use hifiplayer::source::Media;
 use hifiplayer::source::set_stream_resolver;
 use hifiplayer::spotify::{self, SpotifyStatus};
 use hifiplayer::streaming::tidal::{DeviceLogin, LoginPoll};
@@ -22,6 +24,7 @@ use tauri::{Emitter, Manager, State};
 mod background;
 mod desktop;
 mod remote;
+mod taskbar;
 
 struct AppState {
     player: Player,
@@ -211,6 +214,151 @@ async fn analyse_albums(app: tauri::AppHandle, ids: Option<Vec<i64>>) -> Res<usi
     result
 }
 
+// ---- Lyrics and tag editor ---------------------------------------------------------
+
+#[tauri::command]
+async fn track_lyrics(media: Media) -> Res<Option<Lyrics>> {
+    blocking(move || {
+        Ok(match media {
+            // Cue-sheet tracks: lyrics files are timed from the start of the whole file.
+            Media::File { path, start, .. } => hifiplayer::library::tags::read_lyrics(&path, -start.unwrap_or(0.0)),
+            _ => None,
+        })
+    })
+    .await
+}
+
+/// Write tags into the files of the given library tracks, then rescan them.
+/// Returns how many files were changed.
+#[tauri::command]
+async fn edit_tags(app: tauri::AppHandle, state: State<'_, AppState>, ids: Vec<i64>, edit: TagEdit) -> Res<usize> {
+    let paths: Vec<std::path::PathBuf> = {
+        let lib = state.library.lock().unwrap();
+        let mut paths = Vec::new();
+        for id in ids {
+            let t = lib.track(id).map_err(anyhow_err)?.ok_or("track not found")?;
+            if t.cue_start.is_some() {
+                return Err("Tracks from a cue sheet are edited in the .cue file, not here.".into());
+            }
+            paths.push(t.path);
+        }
+        paths
+    };
+    blocking(move || {
+        for p in &paths {
+            hifiplayer::library::tags::write_tags(p, &edit).map_err(anyhow_err)?;
+        }
+        background::scan_now(&app, false);
+        Ok(paths.len())
+    })
+    .await
+}
+
+/// Queue entries for files and folders dropped on the window.
+#[tauri::command]
+async fn items_for_paths(paths: Vec<String>) -> Res<Vec<QueueItem>> {
+    blocking(move || {
+        let lib = Library::open_default().map_err(anyhow_err)?;
+        let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
+        Ok(lib.items_for_paths(&paths))
+    })
+    .await
+}
+
+// ---- Appearance, mini player ------------------------------------------------------------
+
+#[tauri::command]
+fn set_appearance(app: tauri::AppHandle, state: State<'_, AppState>, appearance: Appearance) -> Res<()> {
+    let mut s = state.settings.lock().unwrap();
+    s.appearance = appearance.clone();
+    s.save().map_err(anyhow_err)?;
+    // The mini player follows along.
+    let _ = app.emit("appearance", appearance);
+    Ok(())
+}
+
+/// The cover's two most characteristic colours, as "#rrggbb".
+#[tauri::command]
+async fn cover_colors(path: String) -> Res<Vec<String>> {
+    static CACHE: std::sync::LazyLock<Mutex<std::collections::HashMap<String, Vec<String>>>> =
+        std::sync::LazyLock::new(Default::default);
+    if path.starts_with("http") {
+        return Ok(Vec::new());
+    }
+    if let Some(c) = CACHE.lock().unwrap().get(&path) {
+        return Ok(c.clone());
+    }
+    let key = path.clone();
+    let colors = blocking(move || Ok(palette(&path).unwrap_or_default())).await?;
+    CACHE.lock().unwrap().insert(key, colors.clone());
+    Ok(colors)
+}
+
+fn palette(path: &str) -> Option<Vec<String>> {
+    let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
+    let small = img.thumbnail(48, 48).to_rgb8();
+    // Bucket colours (4 bits per channel); vivid, mid-bright colours count more.
+    let mut buckets: std::collections::HashMap<(u8, u8, u8), (f64, [f64; 3])> = Default::default();
+    for p in small.pixels() {
+        let [r, g, b] = p.0;
+        let (max, min) = (r.max(g).max(b) as f64, r.min(g).min(b) as f64);
+        let sat = if max > 0.0 { (max - min) / max } else { 0.0 };
+        let light = (max + min) / 510.0;
+        let weight = 0.15 + sat * (1.0 - (light - 0.5).abs() * 1.6).max(0.05);
+        let e = buckets.entry((r >> 4, g >> 4, b >> 4)).or_default();
+        e.0 += weight;
+        e.1[0] += r as f64 * weight;
+        e.1[1] += g as f64 * weight;
+        e.1[2] += b as f64 * weight;
+    }
+    let mut all: Vec<(f64, [f64; 3])> =
+        buckets.into_values().map(|(w, s)| (w, [s[0] / w, s[1] / w, s[2] / w])).collect();
+    all.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut picked: Vec<[f64; 3]> = Vec::new();
+    for (_, c) in all {
+        let far = picked.iter().all(|p| (0..3).map(|i| (p[i] - c[i]).powi(2)).sum::<f64>().sqrt() > 60.0);
+        if far {
+            picked.push(c);
+        }
+        if picked.len() == 2 {
+            break;
+        }
+    }
+    Some(picked.iter().map(|c| format!("#{:02x}{:02x}{:02x}", c[0] as u8, c[1] as u8, c[2] as u8)).collect())
+}
+
+/// A small always-on-top player; the main window hides meanwhile.
+#[tauri::command]
+fn open_mini_player(app: tauri::AppHandle) -> Res<()> {
+    if let Some(w) = app.get_webview_window("mini") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    } else {
+        tauri::WebviewWindowBuilder::new(&app, "mini", tauri::WebviewUrl::App("index.html#mini".into()))
+            .title("HiFi Player")
+            .inner_size(420.0, 104.0)
+            .resizable(false)
+            .decorations(false)
+            .always_on_top(true)
+            .background_color(tauri::window::Color(18, 18, 20, 255))
+            .build()
+            .map_err(err)?;
+    }
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.hide();
+    }
+    Ok(())
+}
+
+/// Back from the mini player to the full window.
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    desktop::show_main(&app);
+    if let Some(w) = app.get_webview_window("mini") {
+        let _ = w.close();
+    }
+}
+
 // ---- Favourites, ratings, history ------------------------------------------------
 
 #[tauri::command]
@@ -253,6 +401,16 @@ async fn library_listening(state: State<'_, AppState>) -> Res<ListeningStats> {
 #[tauri::command]
 async fn clear_history(state: State<'_, AppState>) -> Res<()> {
     state.library.lock().unwrap().clear_history().map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_tracks(state: State<'_, AppState>, ids: Vec<i64>) -> Res<Vec<Track>> {
+    let lib = state.library.lock().unwrap();
+    let mut out = Vec::new();
+    for id in ids {
+        out.extend(lib.track(id).map_err(anyhow_err)?);
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -373,6 +531,7 @@ enum PlayerCmd {
     SetShuffle { on: bool },
     SetRepeat { mode: Repeat },
     SetSleep { timer: Option<SleepTimer> },
+    Move { from: usize, to: usize },
 }
 
 #[tauri::command]
@@ -389,6 +548,7 @@ fn player_command(state: State<'_, AppState>, cmd: PlayerCmd) {
         PlayerCmd::SetShuffle { on } => Command::SetShuffle(on),
         PlayerCmd::SetRepeat { mode } => Command::SetRepeat(mode),
         PlayerCmd::SetSleep { timer } => Command::SetSleep(timer),
+        PlayerCmd::Move { from, to } => Command::Move { from, to },
     });
 }
 
@@ -712,6 +872,7 @@ pub fn run() {
                 eprintln!("tray icon: {e}");
             }
             desktop::start_media_controls(app.handle(), player.clone());
+            taskbar::install(app.handle(), player.clone());
             background::start_history(app.handle(), player);
             background::watch_library(app.handle());
             background::start_periodic_scan(app.handle());
@@ -803,6 +964,14 @@ pub fn run() {
             set_fallback,
             asio_control_panel,
             self_test,
+            track_lyrics,
+            library_tracks,
+            edit_tags,
+            items_for_paths,
+            set_appearance,
+            cover_colors,
+            open_mini_player,
+            show_main_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app")
@@ -812,4 +981,20 @@ pub fn run() {
                 app.state::<AppState>().player.shutdown();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cover_palette_finds_the_main_colours() {
+        // Left two thirds red, right third blue.
+        let img = image::RgbImage::from_fn(90, 60, |x, _| if x < 60 { image::Rgb([200, 30, 30]) } else { image::Rgb([20, 40, 210]) });
+        let path = std::env::temp_dir().join("hifiplayer-palette-test.png");
+        img.save(&path).unwrap();
+        let colors = super::palette(path.to_str().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(colors.len(), 2);
+        assert!(colors[0].starts_with("#c") || colors[0].starts_with("#b"), "{colors:?}");
+        assert!(colors[1].ends_with("d2") || colors[1].ends_with("d1"), "{colors:?}");
+    }
 }

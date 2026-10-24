@@ -126,6 +126,8 @@ pub enum Command {
     /// Jump to a queue position.
     Jump(usize),
     Remove(usize),
+    /// Move a queue entry from one position to another.
+    Move { from: usize, to: usize },
     ClearQueue,
     TogglePause,
     Next,
@@ -196,6 +198,7 @@ impl Player {
                     reconnect: None,
                     last_saved: Instant::now(),
                     last_rate: None,
+                    order: Arc::new(Mutex::new(Order::default())),
                 }
                 .run(rx)
             })
@@ -242,6 +245,52 @@ struct Control {
     last_saved: Instant,
     /// Stream rate of the previous track, to announce rate changes.
     last_rate: Option<u32>,
+    /// Translates the decoder's track tags into current queue positions.
+    order: Arc<Mutex<Order>>,
+}
+
+/// The decoder gets an opaque tag per track (queue position + edit epoch),
+/// so moving or removing queue entries while it looks ahead for gapless
+/// playback never makes it play the wrong track.
+#[derive(Default)]
+struct Order {
+    /// Epoch of the first entry in `perms`.
+    base: u64,
+    /// For each edit: old position -> new position (None if removed).
+    perms: Vec<Vec<Option<usize>>>,
+}
+
+impl Order {
+    fn epoch(&self) -> u64 {
+        self.base + self.perms.len() as u64
+    }
+
+    fn tag(&self, pos: usize) -> usize {
+        ((self.epoch() as usize) << 32) | pos
+    }
+
+    /// Current queue position of a tagged track (None if it was removed).
+    fn resolve(&self, tag: usize) -> Option<usize> {
+        let epoch = (tag >> 32) as u64;
+        let mut pos = tag & 0xFFFF_FFFF;
+        if epoch < self.base {
+            return None;
+        }
+        for perm in &self.perms[(epoch - self.base) as usize..] {
+            pos = (*perm.get(pos)?)?;
+        }
+        Some(pos)
+    }
+
+    fn record(&mut self, perm: Vec<Option<usize>>) {
+        self.perms.push(perm);
+    }
+
+    /// A fresh decoder chain: no old tags are alive any more.
+    fn reset(&mut self) {
+        self.base = self.epoch();
+        self.perms.clear();
+    }
 }
 
 /// Update the stream's underrun count and the session dropout history.
@@ -441,6 +490,10 @@ impl Control {
                     let mut q = self.queue.lock().unwrap();
                     if i < q.len() {
                         q.remove(i);
+                        let n = q.len() + 1;
+                        self.order.lock().unwrap().record(
+                            (0..n).map(|k| if k == i { None } else if k > i { Some(k - 1) } else { Some(k) }).collect(),
+                        );
                     }
                     q.len()
                 };
@@ -451,6 +504,26 @@ impl Control {
                     }
                     Some(c) if c > i => self.state.lock().unwrap().index = Some(c - 1),
                     _ => {}
+                }
+            }
+            Command::Move { from, to } => {
+                let mut q = self.queue.lock().unwrap();
+                if from < q.len() && to < q.len() && from != to {
+                    let item = q.remove(from);
+                    q.insert(to, item);
+                    let mut positions: Vec<usize> = (0..q.len()).collect();
+                    let p = positions.remove(from);
+                    positions.insert(to, p);
+                    let mut perm = vec![None; q.len()];
+                    for (new, old) in positions.into_iter().enumerate() {
+                        perm[old] = Some(new);
+                    }
+                    let mut st = self.state.lock().unwrap();
+                    st.index = st.index.and_then(|c| perm.get(c).copied().flatten());
+                    drop(st);
+                    self.order.lock().unwrap().record(perm);
+                    drop(q);
+                    self.sync_queue();
                 }
             }
             Command::ClearQueue => {
@@ -541,13 +614,16 @@ impl Control {
         let queue = self.queue.clone();
         let repeat = self.repeat.clone();
         let stop = self.stop_after_track.clone();
+        let order = self.order.clone();
         Box::new(move |after| {
             if stop.load(Ordering::Relaxed) {
                 return None;
             }
             let q = queue.lock().unwrap();
             let r = *repeat.lock().unwrap();
-            r.follow(after, q.len()).map(|n| (n, q[n].media.clone()))
+            let order = order.lock().unwrap();
+            let after = order.resolve(after)?;
+            r.follow(after, q.len()).map(|n| (order.tag(n), q[n].media.clone()))
         })
     }
 
@@ -614,12 +690,17 @@ impl Control {
             st.status = Status::Loading;
         }
         let opts = self.opts();
-        let p = match engine::start(i, &item.media, secs, &opts, self.next_fn()) {
+        let tag = {
+            let mut order = self.order.lock().unwrap();
+            order.reset();
+            order.tag(i)
+        };
+        let p = match engine::start(tag, &item.media, secs, &opts, self.next_fn()) {
             Ok(p) => p,
             Err(e) if format!("{e:#}").starts_with("the device could not play") => {
                 let fallback = self.state.lock().unwrap().fallback.clone().filter(|f| *f != opts);
                 let Some(f) = fallback else { return Err(e) };
-                let p = engine::start(i, &item.media, secs, &f, self.next_fn()).map_err(|_| e)?;
+                let p = engine::start(tag, &item.media, secs, &f, self.next_fn()).map_err(|_| e)?;
                 let name = |o: &PlayOptions| o.device.clone().unwrap_or_else(|| "the default device".into());
                 self.notify(format!("{} isn't available — playing on {}", name(&opts), name(&f)));
                 p
@@ -803,9 +884,12 @@ impl Control {
             return;
         }
         let Some(p) = &self.current else { return };
-        let pos = p.position();
+        let mut pos = p.position();
+        // The decoder's tag -> the track's current queue position.
+        let resolve = |tag: usize| self.order.lock().unwrap().resolve(tag);
+        pos.index = resolve(pos.index).or(self.index()).unwrap_or(0);
         for (i, err) in p.take_skipped() {
-            let title = self.queue.lock().unwrap().get(i).map(|t| t.title.clone()).unwrap_or_default();
+            let title = resolve(i).and_then(|i| self.queue.lock().unwrap().get(i).map(|t| t.title.clone())).unwrap_or_default();
             self.state.lock().unwrap().error = Some(format!("Skipped {title}: {err}"));
         }
         {
@@ -823,6 +907,11 @@ impl Control {
         match p.wait() {
             Ok(Some((next, _))) => {
                 let before = self.last_rate;
+                let Some(next) = self.order.lock().unwrap().resolve(next) else {
+                    // The next track was removed from the queue meanwhile.
+                    self.stop_current();
+                    return;
+                };
                 self.play_at(next, 0.0);
                 let st = self.state.lock().unwrap();
                 if let Some(p) = &st.signal_path
@@ -869,5 +958,27 @@ impl Control {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Order;
+
+    #[test]
+    fn tags_follow_queue_edits() {
+        let mut o = Order::default();
+        o.reset();
+        let t3 = o.tag(3);
+        // Remove position 1: track 3 is now at 2.
+        o.record((0..5).map(|k| if k == 1 { None } else if k > 1 { Some(k - 1) } else { Some(k) }).collect());
+        assert_eq!(o.resolve(t3), Some(2));
+        // Move 2 -> 0 in a 4-item queue: old 0,1 shift down, 2 goes to the top.
+        o.record(vec![Some(1), Some(2), Some(0), Some(3)]);
+        assert_eq!(o.resolve(t3), Some(0));
+        let t_new = o.tag(3);
+        assert_eq!(o.resolve(t_new), Some(3));
+        let removed = Order { base: 0, perms: vec![vec![Some(0), None]] };
+        assert_eq!(removed.resolve(1), None);
     }
 }

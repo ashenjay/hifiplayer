@@ -119,6 +119,16 @@ export function TrackList({
                     <div className="menu-rate">Rate <Stars value={rating(r)} onChange={(v) => setRating(r, v)} /></div>
                   </>
                 )}
+                {r.trackId != null && (
+                  <button
+                    onClick={() => {
+                      window.dispatchEvent(new CustomEvent('edit-tags', { detail: { ids: [r.trackId] } }))
+                      setMenu(null)
+                    }}
+                  >
+                    Edit tags…
+                  </button>
+                )}
                 {onRemove && <button onClick={() => { onRemove(i); setMenu(null) }}>Remove from playlist</button>}
               </div>
             )}

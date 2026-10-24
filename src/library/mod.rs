@@ -9,6 +9,7 @@ mod id3;
 mod migrate;
 mod scan;
 mod search;
+pub mod tags;
 
 pub use extras::{AlbumExtra, HistoryEntry, ListeningStats, Playlist};
 pub use search::{Facets, HealthReport, SmartSearch};

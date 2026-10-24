@@ -23,6 +23,15 @@ export function AlbumTools({ album }: { album: Album }) {
         <button onClick={() => setGallery(true)}>Booklet & artwork ({extras.length})</button>
       )}
       {isDsd(album) && <button onClick={() => setConverting(true)}>Convert to FLAC…</button>}
+      {!isDsd(album) && <button
+        onClick={() =>
+          api.album(album.id).then((p) =>
+            window.dispatchEvent(new CustomEvent('edit-tags', { detail: { ids: p.tracks.map((t) => t.id), album } })),
+          )
+        }
+      >
+        Edit tags…
+      </button>}
       {gallery && <Gallery extras={extras} onClose={() => setGallery(false)} />}
       {converting && <ConvertDialog album={album} onClose={() => setConverting(false)} toast={toast} />}
     </>

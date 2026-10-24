@@ -201,6 +201,30 @@ impl Library {
         }
     }
 
+    /// Queue entries for dropped files and folders: library tracks keep
+    /// their library details, other files are read on the spot.
+    pub fn items_for_paths(&self, paths: &[std::path::PathBuf]) -> Vec<QueueItem> {
+        super::tags::expand_paths(paths)
+            .into_iter()
+            .filter_map(|path| {
+                let key = path.to_string_lossy().into_owned();
+                if let Some(t) = self.tracks_where("t.path = ?1", [&key]).ok()?.into_iter().next() {
+                    return Some(self.queue_item(&t));
+                }
+                let m = super::scan::read_meta(&path).ok()?;
+                Some(QueueItem {
+                    media: crate::source::Media::file(&path),
+                    quality: Some(super::quality_label(&m.format, m.sample_rate, m.bits, m.is_dsd)),
+                    title: m.title,
+                    artist: m.artist,
+                    album: m.album,
+                    art: None,
+                    duration: Some(m.duration),
+                })
+            })
+            .collect()
+    }
+
     // ---- Analysis ------------------------------------------------------------------------
 
     /// Stored analysis of each track of an album (None = not analysed or file changed).

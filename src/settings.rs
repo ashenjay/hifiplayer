@@ -31,6 +31,27 @@ pub struct Settings {
     pub devices: BTreeMap<String, DeviceProfile>,
     /// Played on instead when the chosen device is unplugged or busy.
     pub fallback: Option<PlayOptions>,
+    pub appearance: Appearance,
+}
+
+/// Look of the app (it never affects the sound).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Appearance {
+    /// "dark", "light", "system", "oled" or "midnight".
+    pub theme: String,
+    /// Accent colour as "#rrggbb".
+    pub accent: String,
+    /// Tint album and now-playing pages with the cover's colours.
+    pub cover_colors: bool,
+    /// The accent colour follows the playing album's cover.
+    pub accent_from_cover: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self { theme: "dark".into(), accent: "#8b5cf6".into(), cover_colors: true, accent_from_cover: false }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

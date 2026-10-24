@@ -284,7 +284,34 @@ export interface TrackAnalysis {
   analysis?: Analysis | null
 }
 
+export interface Appearance {
+  theme: string
+  accent: string
+  coverColors: boolean
+  accentFromCover: boolean
+}
+
+export interface Lyrics {
+  synced: [number, string][]
+  text?: string | null
+  source: string
+}
+
+/** Fields to change; undefined = keep, '' = clear. */
+export interface TagEdit {
+  title?: string
+  artist?: string
+  album?: string
+  albumArtist?: string
+  composer?: string
+  genre?: string
+  year?: string
+  trackNo?: string
+  discNo?: string
+}
+
 export interface Settings {
+  appearance?: Appearance
   devices: Record<string, DeviceProfile>
   fallback?: PlayOptions | null
   output: PlayOptions
@@ -407,6 +434,14 @@ export const api = {
   selfTest: () => invoke<SignalPath>('self_test'),
   albumAnalysis: (id: number) => invoke<TrackAnalysis[]>('album_analysis', { id }),
   analyseAlbums: (ids: number[] | null) => invoke<number>('analyse_albums', { ids }),
+  trackLyrics: (media: Media) => invoke<Lyrics | null>('track_lyrics', { media }),
+  libraryTracks: (ids: number[]) => invoke<Track[]>('library_tracks', { ids }),
+  editTags: (ids: number[], edit: TagEdit) => invoke<number>('edit_tags', { ids, edit }),
+  itemsForPaths: (paths: string[]) => invoke<QueueItem[]>('items_for_paths', { paths }),
+  setAppearance: (appearance: Appearance) => invoke<void>('set_appearance', { appearance }),
+  coverColors: (path: string) => invoke<string[]>('cover_colors', { path }),
+  openMiniPlayer: () => invoke<void>('open_mini_player'),
+  showMainWindow: () => invoke<void>('show_main_window'),
   setStreamQuality: (quality: StreamQuality) => invoke<void>('set_stream_quality', { quality }),
   setDesktop: (desktop: DesktopSettings) => invoke<void>('set_desktop', { desktop }),
 
@@ -446,6 +481,7 @@ export type PlayerCommand =
   | { type: 'setShuffle'; on: boolean }
   | { type: 'setRepeat'; mode: Repeat }
   | { type: 'setSleep'; timer: SleepTimer | null }
+  | { type: 'move'; from: number; to: number }
 
 // ---- Helpers -------------------------------------------------------------------
 

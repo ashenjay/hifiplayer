@@ -10,6 +10,8 @@ import {
 import { ErrorBox, Loading, useLoad } from '../components/common'
 import { useNav } from '../nav'
 import { RemoteCard } from './RemoteCard'
+import { ACCENTS, DEFAULT_APPEARANCE, THEMES, applyAppearance } from '../theme'
+import type { Appearance } from '../api'
 import { SpotifyCard } from './Spotify'
 
 export function SettingsPage() {
@@ -17,6 +19,7 @@ export function SettingsPage() {
     <div className="settings">
       <div className="page-head"><h1>Settings</h1></div>
       <AudioSettings />
+      <AppearanceSettings />
       <LibrarySettings />
       <AnalysisSettings />
       <StreamingSettings />
@@ -55,6 +58,57 @@ function WindowsSettings() {
   )
 }
 
+function AppearanceSettings() {
+  const { toast } = useNav()
+  const [settings] = useLoad(() => api.settings(), [])
+  const [a, setA] = useState<Appearance>()
+  useEffect(() => { if (settings && !a) setA(settings.appearance ?? DEFAULT_APPEARANCE) }, [settings, a])
+  if (!a) return null
+  const update = (patch: Partial<Appearance>) => {
+    const next = { ...a, ...patch }
+    setA(next)
+    applyAppearance(next)
+    api.setAppearance(next).catch((e) => toast(String(e)))
+  }
+  const Toggle = ({ k, label, hint }: { k: 'coverColors' | 'accentFromCover'; label: string; hint: string }) => (
+    <label className="toggle">
+      <input type="checkbox" checked={a[k]} onChange={(e) => update({ [k]: e.target.checked })} />
+      <span><b>{label}</b><br /><span className="muted small">{hint}</span></span>
+    </label>
+  )
+  return (
+    <section className="card">
+      <h2>Appearance</h2>
+      <div className="theme-tiles">
+        {THEMES.map((t) => (
+          <button key={t.id} className={`theme-tile${a.theme === t.id ? ' on' : ''}`} onClick={() => update({ theme: t.id })}>
+            <span className="theme-swatch" style={{ background: `linear-gradient(135deg, ${t.swatch[0]} 50%, ${t.swatch[1]} 50%)` }} />
+            {t.name}
+          </button>
+        ))}
+      </div>
+      <div className="accent-row">
+        <span className="muted">Accent colour</span>
+        {ACCENTS.map((c) => (
+          <button
+            key={c}
+            className={`accent-dot${a.accent === c ? ' on' : ''}`}
+            style={{ background: c }}
+            title={c}
+            onClick={() => update({ accent: c })}
+          />
+        ))}
+        <label className="accent-custom" title="Choose any colour">
+          <input type="color" value={a.accent} onChange={(e) => update({ accent: e.target.value })} />
+          Custom
+        </label>
+      </div>
+      <Toggle k="coverColors" label="Cover-art colours" hint="Album and now-playing pages take on the colours of the cover." />
+      <Toggle k="accentFromCover" label="Accent follows the playing album" hint="Buttons and highlights match the cover of what's playing." />
+    </section>
+  )
+}
+
 function About() {
   const [version, setVersion] = useState<string>()
   useEffect(() => {
@@ -68,6 +122,7 @@ function About() {
         <br />
         <span className="muted">Bit-perfect music player for Windows.</span>
       </p>
+      <p><button onClick={() => window.dispatchEvent(new Event('whats-new'))}>What's new</button></p>
       <p className="small muted">
         Copyright © 2026 HiFi Player Project. This program is free software: you can redistribute it and/or modify it
         under the terms of the GNU General Public License version 3. It comes with ABSOLUTELY NO WARRANTY. The licence

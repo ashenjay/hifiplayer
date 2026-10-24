@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, listen, type PlayerState, type QueueItem } from './api'
+import { api, currentItem, inTauri, listen, type Album, type PlayerState, type QueueItem } from './api'
 import { Icon } from './components/common'
 import { NowPlayingBar, nextRepeat } from './components/NowPlayingBar'
 import { NavContext, type View } from './nav'
@@ -11,6 +11,8 @@ import { NowPlayingPage, QueuePage } from './pages/Player'
 import { SettingsPage } from './pages/Settings'
 import { SpotifyPage } from './pages/Spotify'
 import { ServicePage, StreamAlbumPage, StreamArtistPage } from './pages/Streaming'
+import { DropZone, TagEditor, TvMode, WhatsNew, useWhatsNewOnUpdate } from './components/Extras'
+import { useAppearance } from './theme'
 
 function Page({ view }: { view: View }) {
   switch (view.name) {
@@ -62,6 +64,8 @@ const SHORTCUTS: [string, string][] = [
   ['/ or Ctrl + F', 'Search'],
   ['Q', 'Queue'],
   ['N', 'Now playing'],
+  ['F', 'TV mode (full screen)'],
+  ['M', 'Mini player'],
   ['Alt + ←', 'Back'],
   ['?', 'Show / hide this list'],
   ['Ctrl + Alt + Space', 'Play / pause (anywhere in Windows)'],
@@ -142,6 +146,27 @@ export default function App() {
     return () => { un.then((f) => f()) }
   }, [toast])
 
+  useAppearance(currentItem(player)?.art)
+  const [tv, setTv] = useState(false)
+  const [tagEdit, setTagEdit] = useState<{ ids: number[]; album?: Album } | null>(null)
+  const [whatsNew, closeWhatsNew] = useWhatsNewOnUpdate()
+  const [showWhatsNew, setShowWhatsNew] = useState(false)
+  useEffect(() => {
+    const onTv = () => setTv(true)
+    const onTags = (e: Event) => setTagEdit((e as CustomEvent).detail)
+    const onNew = () => setShowWhatsNew(true)
+    window.addEventListener('tv-mode', onTv)
+    window.addEventListener('edit-tags', onTags)
+    window.addEventListener('whats-new', onNew)
+    return () => {
+      window.removeEventListener('tv-mode', onTv)
+      window.removeEventListener('edit-tags', onTags)
+      window.removeEventListener('whats-new', onNew)
+    }
+  }, [])
+  const closeTv = useCallback(() => setTv(false), [])
+  const closeTags = useCallback(() => setTagEdit(null), [])
+
   // Keyboard shortcuts (ignored while typing in a field). Press ? for the list.
   const [showKeys, setShowKeys] = useState(false)
   const playerRef = useRef(player)
@@ -170,6 +195,8 @@ export default function App() {
       else if (e.key === '/' || (e.ctrlKey && k === 'f')) run(() => document.querySelector<HTMLInputElement>('.search input')?.focus())
       else if (k === 'q' && !e.ctrlKey) run(() => go({ name: 'queue' }))
       else if (k === 'n' && !e.ctrlKey) run(() => go({ name: 'nowPlaying' }))
+      else if (k === 'f' && !e.ctrlKey) run(() => setTv(true))
+      else if (k === 'm' && !e.ctrlKey && inTauri) run(() => api.openMiniPlayer())
       else if (e.key === '?') run(() => setShowKeys((s) => !s))
     }
     window.addEventListener('keydown', onKey)
@@ -226,6 +253,10 @@ export default function App() {
         <NowPlayingBar />
 
         {showKeys && <ShortcutHelp onClose={() => setShowKeys(false)} />}
+        {tv && <TvMode onClose={closeTv} />}
+        {tagEdit && <TagEditor ids={tagEdit.ids} album={tagEdit.album} onClose={closeTags} />}
+        {(whatsNew || showWhatsNew) && <WhatsNew onClose={() => { closeWhatsNew(); setShowWhatsNew(false) }} />}
+        <DropZone />
         {playlistItems && <AddToPlaylistDialog items={playlistItems} onClose={() => setPlaylistItems(null)} />}
 
         <div className="toasts">

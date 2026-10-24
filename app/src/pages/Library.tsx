@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
-import { api, clock, trackItems, type Album } from '../api'
+import { api, clock, trackItems, type Album, type QueueItem, type Track } from '../api'
 import { AlbumGrid } from '../components/AlbumGrid'
 import { Cover, ErrorBox, Icon, Loading, QualityBadge, useLoad } from '../components/common'
 import { TrackList } from '../components/TrackList'
 import { useNav } from '../nav'
 import { AlbumAnalysis, AlbumTools } from './AlbumTools'
 import { albumGrid, trackQueueItems, trackRows } from './Collection'
+import { coverTint, useCoverColors } from '../theme'
 
 type Sort = 'artist' | 'title' | 'year' | 'recent'
 
@@ -103,7 +104,7 @@ export function AlbumsPage() {
 const TYPE_NAMES: Record<string, string> = { live: 'Live album', compilation: 'Compilation', soundtrack: 'Soundtrack', ep: 'EP', single: 'Single' }
 
 export function AlbumPage({ id }: { id: number }) {
-  const { go, toast, addToPlaylist, libVersion } = useNav()
+  const { toast, libVersion } = useNav()
   const [page, error, reload] = useLoad(() => api.album(id), [id, libVersion])
   const [versions] = useLoad(() => api.versions(id), [id, libVersion])
   if (error) return <ErrorBox error={error} />
@@ -113,8 +114,24 @@ export function AlbumPage({ id }: { id: number }) {
   const multiDisc = new Set(tracks.map((t) => t.discNo ?? 1)).size > 1
   const toggleFav = () => api.setAlbumFavorite(album.id, !album.favorite).then(reload).catch((e) => toast(String(e)))
   const composers = [...new Set(tracks.map((t) => t.composer).filter(Boolean))] as string[]
+  return <AlbumView page={page} versions={versions} reload={reload} items={items} multiDisc={multiDisc} composers={composers} toggleFav={toggleFav} />
+}
+
+function AlbumView({
+  page: { album, tracks }, versions, items, multiDisc, composers, toggleFav,
+}: {
+  page: { album: Album; tracks: Track[] }
+  versions?: Album[]
+  reload: () => void
+  items: QueueItem[]
+  multiDisc: boolean
+  composers: string[]
+  toggleFav: () => void
+}) {
+  const { go, toast, addToPlaylist } = useNav()
+  const colors = useCoverColors(album.artPath)
   return (
-    <div>
+    <div className="tinted album-page" style={coverTint(colors)}>
       <div className="album-hero">
         <Cover src={album.artPath} title={album.title} size={240} />
         <div className="album-hero-text">
