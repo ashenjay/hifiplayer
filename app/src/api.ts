@@ -82,6 +82,15 @@ export type Media =
   | { kind: 'stream'; service: string; id: string }
   | { kind: 'spotify' }
 
+export interface RemoteStatus {
+  enabled: boolean
+  running: boolean
+  url?: string | null
+  pin: string
+  port: number
+  error?: string | null
+}
+
 export interface SpotifyStatus {
   loggedIn: boolean
   connected: boolean
@@ -254,6 +263,10 @@ export const api = {
   streamArtist: (service: string, id: string) =>
     invoke<{ artist: StreamArtist; albums: StreamAlbum[] }>('stream_artist', { service, id }),
   streamFavorites: (service: string) => invoke<StreamAlbum[]>('stream_favorites', { service }),
+
+  remoteStatus: () => invoke<RemoteStatus>('remote_status'),
+  remoteSetEnabled: (enabled: boolean) => invoke<RemoteStatus>('remote_set_enabled', { enabled }),
+  remoteNewPin: () => invoke<RemoteStatus>('remote_new_pin'),
 
   spotifyStatus: () => invoke<SpotifyStatus>('spotify_status'),
   spotifyLogin: () => invoke<SpotifyStatus>('spotify_login'),

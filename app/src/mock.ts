@@ -68,6 +68,7 @@ const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
     { service: 'qobuz', configured: true, loggedIn: true, user: 'Demo user', plan: 'Studio' },
     { service: 'tidal', configured: false, loggedIn: false },
   ],
+  remote_status: () => ({ enabled: true, running: true, url: 'http://192.168.1.20:8899', pin: '482913', port: 8899 }),
   spotify_status: () => ({ loggedIn: true, connected: true, connecting: false, user: 'demo', deviceName: 'HiFi Player' }),
   stream_favorites: () => streamAlbums,
   stream_search: () => ({ albums: streamAlbums, tracks: streamTracks, artists: [] }),

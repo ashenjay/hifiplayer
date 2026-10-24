@@ -16,11 +16,14 @@ use hifiplayer::streaming::{AccountStatus, ArtistPage, SearchResults, Services, 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
+mod remote;
+
 struct AppState {
     player: Player,
     library: Mutex<Library>,
     services: Arc<Services>,
     settings: Mutex<Settings>,
+    remote: remote::Remote,
 }
 
 type Res<T> = Result<T, String>;
@@ -171,7 +174,7 @@ fn play_items(state: State<'_, AppState>, items: Vec<QueueItem>, start: usize, m
     });
 }
 
-fn library_items(lib: &Library, album_id: i64) -> anyhow::Result<Vec<QueueItem>> {
+pub(crate) fn library_items(lib: &Library, album_id: i64) -> anyhow::Result<Vec<QueueItem>> {
     let album = lib.album(album_id)?.ok_or_else(|| anyhow::anyhow!("album not found"))?;
     Ok(lib
         .album_tracks(album_id)?
@@ -308,6 +311,32 @@ async fn stream_favorites(state: State<'_, AppState>, service: String) -> Res<Ve
     blocking(move || s.favorite_albums(&service).map_err(anyhow_err)).await
 }
 
+// ---- Browser remote --------------------------------------------------------------
+
+#[tauri::command]
+fn remote_status(state: State<'_, AppState>) -> remote::RemoteStatus {
+    state.remote.status(&state.settings.lock().unwrap().remote)
+}
+
+#[tauri::command]
+fn remote_set_enabled(state: State<'_, AppState>, enabled: bool) -> Res<remote::RemoteStatus> {
+    let mut s = state.settings.lock().unwrap();
+    s.remote.enabled = enabled;
+    s.save().map_err(anyhow_err)?;
+    state.remote.apply(&s.remote);
+    Ok(state.remote.status(&s.remote))
+}
+
+/// Replace the PIN; phones using the old one have to enter the new one.
+#[tauri::command]
+fn remote_new_pin(state: State<'_, AppState>) -> Res<remote::RemoteStatus> {
+    let mut s = state.settings.lock().unwrap();
+    s.remote.pin = hifiplayer::settings::new_pin();
+    s.save().map_err(anyhow_err)?;
+    state.remote.apply(&s.remote);
+    Ok(state.remote.status(&s.remote))
+}
+
 // ---- Spotify Connect ---------------------------------------------------------
 
 #[tauri::command]
@@ -335,11 +364,15 @@ pub fn run() {
     let player = Player::new(settings.output.clone());
     let p = player.clone();
     spotify::init(move |ev| p.send(Command::Spotify(ev)));
+    let remote = remote::Remote::new(player.clone());
+    remote.apply(&settings.remote);
+    // Persist the generated PIN so it stays the same across restarts.
+    let _ = settings.save();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState { player, library: Mutex::new(library), services, settings: Mutex::new(settings) })
+        .manage(AppState { player, library: Mutex::new(library), services, settings: Mutex::new(settings), remote })
         .setup(|app| {
             // Push player state to the UI four times a second.
             let handle = app.handle().clone();
@@ -387,6 +420,9 @@ pub fn run() {
             spotify_status,
             spotify_login,
             spotify_logout,
+            remote_status,
+            remote_set_enabled,
+            remote_new_pin,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app")

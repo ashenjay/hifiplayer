@@ -8,6 +8,7 @@ import {
 } from '../api'
 import { ErrorBox, Loading, useLoad } from '../components/common'
 import { useNav } from '../nav'
+import { RemoteCard } from './RemoteCard'
 import { SpotifyCard } from './Spotify'
 
 export function SettingsPage() {
@@ -17,6 +18,7 @@ export function SettingsPage() {
       <AudioSettings />
       <LibrarySettings />
       <StreamingSettings />
+      <RemoteCard />
       <About />
     </div>
   )

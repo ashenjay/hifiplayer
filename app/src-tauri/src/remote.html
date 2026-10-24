@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#121214" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>HiFi Player Remote</title>
+<style>
+  :root { --bg:#121214; --panel:#1c1c21; --line:#2c2c34; --text:#ececf1; --muted:#9a9aa6; --accent:#8b5cf6; --accent2:#a78bfa; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui, 'Segoe UI', Roboto, sans-serif; }
+  body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  button { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+  input { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; width: 100%; }
+  svg { width: 26px; height: 26px; fill: currentColor; }
+  .muted { color: var(--muted); } .small { font-size: 13px; }
+  .hidden { display: none !important; }
+
+  #login { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; }
+  #login input { max-width: 220px; text-align: center; font-size: 28px; letter-spacing: .3em; }
+  #login button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 12px 30px; }
+  .logo { width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #8b5cf6, #ec4899); }
+
+  #now { padding: 18px 18px 10px; }
+  .art { width: 100%; aspect-ratio: 1; border-radius: 12px; background: var(--panel) center/cover no-repeat; box-shadow: 0 18px 40px #000a; max-width: 420px; margin: 0 auto; display: block; }
+  .title { font-size: 21px; font-weight: 650; margin: 16px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .artist { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 10px; background: #2a2340; color: #d8b4fe; margin-top: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #a855f7; }
+  .dot.high { background: #22c55e; } .dot.low { background: #eab308; }
+  .seek { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .seek input { flex: 1; padding: 0; height: 4px; appearance: none; -webkit-appearance: none; border: none; background: #3a3a44; border-radius: 2px; }
+  .seek input::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+  .controls { display: flex; justify-content: center; align-items: center; gap: 34px; margin: 14px 0 6px; }
+  .controls button { background: none; border: none; padding: 8px; }
+  .controls .play { width: 68px; height: 68px; border-radius: 50%; background: var(--text); color: #111; display: flex; align-items: center; justify-content: center; }
+  .controls .play svg { width: 34px; height: 34px; }
+  .controls svg { width: 34px; height: 34px; }
+
+  .tabs { display: flex; gap: 6px; padding: 8px 18px; position: sticky; top: 0; background: var(--bg); z-index: 5; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 1; border: none; background: none; color: var(--muted); font-weight: 600; }
+  .tabs button.on { color: var(--text); background: var(--panel); }
+  .pane { padding: 14px 18px 40px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px 12px; margin-top: 12px; }
+  .card .cv { width: 100%; aspect-ratio: 1; border-radius: 8px; background: var(--panel) center/cover no-repeat; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff8; font-size: 22px; }
+  .card .t { font-weight: 600; font-size: 14px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .a { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 11px 8px; border-radius: 8px; }
+  .row.cur { background: #241a3a; } .row.cur .rt { color: var(--accent2); font-weight: 600; }
+  .row .n { width: 26px; text-align: center; color: var(--muted); font-size: 13px; }
+  .row .rt { flex: 1; min-width: 0; } .row .rt div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .d { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .back { background: none; border: none; padding: 4px 0; color: var(--accent2); }
+  .hero { display: flex; gap: 14px; align-items: flex-end; margin: 10px 0 14px; }
+  .hero .cv { width: 110px; height: 110px; flex: none; border-radius: 8px; background: var(--panel) center/cover no-repeat; }
+  .hero h2 { margin: 0 0 4px; font-size: 19px; }
+  .primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; margin-top: 8px; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #2a2a33; border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; max-width: 90vw; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="logo"></div>
+  <h2 style="margin:0">HiFi Player Remote</h2>
+  <div class="muted small">Enter the PIN shown in HiFi Player → Settings → Remote control.</div>
+  <input id="pin" inputmode="numeric" maxlength="6" autocomplete="off" />
+  <button id="go">Connect</button>
+  <div id="loginErr" class="small" style="color:#f87171"></div>
+</div>
+
+<div id="app" class="hidden">
+  <section id="now">
+    <div class="art" id="art"></div>
+    <div class="title" id="title">Nothing playing</div>
+    <div class="artist" id="artist"></div>
+    <div id="badge" class="badge hidden"><span class="dot" id="dot"></span><span id="quality"></span></div>
+    <div class="seek"><span id="pos">0:00</span><input type="range" id="seek" min="0" max="1" step="0.1" value="0" /><span id="dur">0:00</span></div>
+    <div class="controls">
+      <button id="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M18 6l-8.5 6 8.5 6zM6 6h2v12H6z"/></svg></button>
+      <button id="play" class="play" aria-label="Play or pause"></button>
+      <button id="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M6 6l8.5 6L6 18zM16 6h2v12h-2z"/></svg></button>
+    </div>
+  </section>
+
+  <nav class="tabs">
+    <button data-tab="albums" class="on">Albums</button>
+    <button data-tab="queue">Queue</button>
+  </nav>
+  <section class="pane" id="albums">
+    <input id="q" placeholder="Search albums" />
+    <div class="grid" id="grid"></div>
+  </section>
+  <section class="pane hidden" id="album"></section>
+  <section class="pane hidden" id="queue"></section>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script>
+const PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+const PAUSE = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+let pin = localStorage.getItem('hifi-pin') || '';
+let state = null, dragging = false, tab = 'albums';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const clock = (s) => { if (s == null || !isFinite(s)) return '0:00'; s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = String(s%60).padStart(2,'0'); return h ? `${h}:${String(m).padStart(2,'0')}:${x}` : `${m}:${x}`; };
+
+function toast(t) { const el = $('toast'); el.textContent = t; el.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.add('hidden'), 3500); }
+
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'X-Pin': pin, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 401) { showLogin('Wrong PIN'); throw new Error('wrong PIN'); }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+const cmd = (c) => api('/api/cmd', c).catch((e) => toast(e.message));
+
+function showLogin(err) { $('app').classList.add('hidden'); $('login').classList.remove('hidden'); $('loginErr').textContent = err || ''; }
+async function login() {
+  pin = $('pin').value.trim();
+  try { await api('/api/state'); localStorage.setItem('hifi-pin', pin); start(); } catch (e) { if (e.message !== 'wrong PIN') $('loginErr').textContent = e.message; }
+}
+$('go').onclick = login;
+$('pin').onkeydown = (e) => { if (e.key === 'Enter') login(); };
+
+function current(s) { return s.live || (s.index != null ? s.queue[s.index] : null); }
+function level(p) { if (!p) return ''; if (/MP3|AAC|VORBIS|OGG|OPUS/i.test(p.source)) return 'low'; return p.bit_perfect ? '' : 'high'; }
+
+function render(s) {
+  state = s;
+  const it = current(s);
+  $('title').textContent = it ? it.title : 'Nothing playing';
+  $('artist').textContent = it ? [it.artist, it.album].filter(Boolean).join(' — ') : '';
+  const art = it && it.art ? (/^https?:/.test(it.art) ? it.art : `/api/cover/current?pin=${encodeURIComponent(pin)}&k=${encodeURIComponent(it.title)}`) : '';
+  const fallback = 'linear-gradient(135deg,#4c2d82,#2a1640)';
+  const artEl = $('art'); const want = art ? `url("${art}"), ${fallback}` : fallback; if (artEl.dataset.bg !== want) { artEl.style.backgroundImage = want; artEl.dataset.bg = want; }
+  $('play').innerHTML = s.status === 'playing' || s.status === 'loading' ? PAUSE : PLAY;
+  const dur = s.duration || (it && it.duration) || 0;
+  if (!dragging) { $('seek').max = dur || 1; $('seek').value = Math.min(s.position, dur || 1); $('pos').textContent = clock(s.position); }
+  $('dur').textContent = clock(dur);
+  if (it && it.quality) { $('badge').classList.remove('hidden'); $('quality').textContent = it.quality; $('dot').className = 'dot ' + level(s.signalPath); } else $('badge').classList.add('hidden');
+  if (tab === 'queue') renderQueue();
+}
+
+function renderQueue() {
+  const s = state; if (!s) return;
+  if (s.live) { $('queue').innerHTML = '<div class="muted">Spotify is playing. Use the Spotify app for its queue.</div>'; return; }
+  if (!s.queue.length) { $('queue').innerHTML = '<div class="muted">The queue is empty.</div>'; return; }
+  $('queue').innerHTML = s.queue.map((q, i) => `<div class="row ${i === s.index ? 'cur' : ''}" data-i="${i}"><span class="n">${i === s.index ? '♪' : i + 1}</span><div class="rt"><div>${esc(q.title)}</div><div class="muted small">${esc(q.artist || '')}</div></div><span class="d">${clock(q.duration)}</span></div>`).join('');
+}
+$('queue').onclick = (e) => { const r = e.target.closest('.row'); if (r) cmd({ type: 'jump', index: Number(r.dataset.i) }); };
+
+$('play').onclick = () => cmd({ type: 'togglePause' });
+$('prev').onclick = () => cmd({ type: 'previous' });
+$('next').onclick = () => cmd({ type: 'next' });
+$('seek').oninput = () => { dragging = true; $('pos').textContent = clock(Number($('seek').value)); };
+$('seek').onchange = () => { cmd({ type: 'seek', secs: Number($('seek').value) }); setTimeout(() => (dragging = false), 1200); };
+
+function showTab(t) {
+  tab = t;
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+  $('albums').classList.toggle('hidden', t !== 'albums');
+  $('album').classList.add('hidden');
+  $('queue').classList.toggle('hidden', t !== 'queue');
+  if (t === 'queue') renderQueue();
+}
+document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+
+// Album art, with a purple gradient showing through when there is none.
+function cover(id) {
+  return `style="background-image:url('/api/cover/album/${id}?pin=${encodeURIComponent(pin)}'), linear-gradient(135deg,#4c2d82,#2a1640)"`;
+}
+async function loadAlbums(q) {
+  try {
+    const albums = await api('/api/albums' + (q ? '?q=' + encodeURIComponent(q) : ''));
+    $('grid').innerHTML = albums.length ? albums.map((a) => `<div class="card" data-id="${a.id}"><div class="cv" ${cover(a.id)}></div><div class="t">${esc(a.title)}</div><div class="a">${esc(a.artist)}</div></div>`).join('') : '<div class="muted">No albums.</div>';
+  } catch (e) { toast(e.message); }
+}
+let searchTimer; $('q').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadAlbums($('q').value.trim()), 300); };
+$('grid').onclick = (e) => { const c = e.target.closest('.card'); if (c) openAlbum(Number(c.dataset.id)); };
+
+async function openAlbum(id) {
+  try {
+    const { album, tracks } = await api('/api/album/' + id);
+    $('albums').classList.add('hidden');
+    const el = $('album'); el.classList.remove('hidden');
+    el.innerHTML = `<button class="back" id="back">‹ Albums</button>
+      <div class="hero"><div class="cv" ${cover(album.id)}></div><div><h2>${esc(album.title)}</h2><div class="muted">${esc(album.artist)}${album.year ? ' · ' + album.year : ''}</div><div class="muted small">${esc(album.quality)}</div><button class="primary" id="playAll">▶ Play album</button></div></div>
+      ${tracks.map((t, i) => `<div class="row" data-i="${i}"><span class="n">${t.trackNo ?? i + 1}</span><div class="rt"><div>${esc(t.title)}</div></div><span class="d">${clock(t.duration)}</span></div>`).join('')}`;
+    $('back').onclick = () => showTab('albums');
+    $('playAll').onclick = () => cmd({ type: 'playAlbum', id: album.id, start: 0 }).then(() => toast('Playing ' + album.title));
+    el.onclick = (e) => { const r = e.target.closest('.row'); if (r) cmd({ type: 'playAlbum', id: album.id, start: Number(r.dataset.i) }); };
+    window.scrollTo({ top: $('now').offsetHeight - 10, behavior: 'smooth' });
+  } catch (e) { toast(e.message); }
+}
+
+async function poll() { try { render(await api('/api/state')); } catch (_) {} }
+function start() {
+  $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  poll(); loadAlbums('');
+  clearInterval(start.t); start.t = setInterval(poll, 1000);
+}
+if (pin) { api('/api/state').then(start).catch(() => showLogin()); } else showLogin();
+</script>
+</body>
+</html>

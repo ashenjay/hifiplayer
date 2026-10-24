@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-24
+
+### Added
+- **Remote control from your phone:** turn it on in Settings → Remote control, scan the QR code and enter the PIN.
+  - Shows now playing with cover and quality badge, plus play/pause, previous/next, seek, the queue, and album browsing and search.
+  - Only commands travel over the network; audio still goes from the PC to the DAC.
+  - Off by default and protected by a 6-digit PIN, with a slowdown after wrong guesses.
+
+### Fixed
+- Settings files saved with a UTF-8 BOM (e.g. edited in Notepad) are now read correctly.
+
 ## [1.0.0] - 2026-10-24
 
 First public release.
@@ -33,5 +44,6 @@ First public release.
 - Spotify streams are Ogg Vorbis 320 kbps (not lossless).
 - Full Qobuz/Tidal streaming needs partner API access from those services.
 
-[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ashenjay/hifiplayer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ashenjay/hifiplayer/releases/tag/v1.0.0

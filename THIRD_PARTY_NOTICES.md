@@ -8,7 +8,7 @@ Trademarks: ASIO is a trademark of Steinberg Media Technologies GmbH. Spotify, Q
 TIDAL are trademarks of their respective owners. HiFi Player is not affiliated with or
 endorsed by any of them. Spotify playback uses the unofficial librespot library.
 
-## Rust crates (473)
+## Rust crates (476)
 
 | Crate | Version | Licence | Repository |
 |---|---|---|---|
@@ -25,6 +25,7 @@ endorsed by any of them. Spotify playback uses the unofficial librespot library.
 | anstyle-wincon | 3.0.11 | MIT OR Apache-2.0 | https://github.com/rust-cli/anstyle.git |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | https://github.com/dtolnay/anyhow |
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 | https://github.com/bluss/arrayvec |
+| ascii | 1.1.0 | Apache-2.0 OR MIT | https://github.com/tomprogrammer/rust-ascii |
 | async-trait | 0.1.92 | MIT OR Apache-2.0 | https://github.com/dtolnay/async-trait |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | https://github.com/smol-rs/atomic-waker |
 | autocfg | 1.5.1 | Apache-2.0 OR MIT | https://github.com/cuviper/autocfg |
@@ -50,6 +51,7 @@ endorsed by any of them. Spotify playback uses the unofficial librespot library.
 | cfb | 0.14.0 | MIT | https://github.com/mdsteele/rust-cfb |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/cfg-if |
 | chrono | 0.4.45 | MIT OR Apache-2.0 | https://github.com/chronotope/chrono |
+| chunked_transfer | 1.5.0 | MIT OR Apache-2.0 | https://github.com/frewsxcv/rust-chunked-transfer |
 | cipher | 0.4.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | clap | 4.6.7 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
 | clap_builder | 4.6.7 | MIT OR Apache-2.0 | https://github.com/clap-rs/clap |
@@ -383,6 +385,7 @@ endorsed by any of them. Spotify playback uses the unofficial librespot library.
 | time | 0.3.55 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
 | time-core | 0.1.9 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
 | time-macros | 0.2.32 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
+| tiny_http | 0.12.0 | MIT OR Apache-2.0 | https://github.com/tiny-http/tiny-http |
 | tinystr | 0.8.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/tinyvec |
 | tokio | 1.54.1 | MIT | https://github.com/tokio-rs/tokio |
@@ -493,5 +496,6 @@ endorsed by any of them. Spotify playback uses the unofficial librespot library.
 | @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT |
 | @tauri-apps/plugin-dialog | 2.8.3 | MIT OR Apache-2.0 |
 | @tauri-apps/plugin-opener | 2.7.2 | MIT OR Apache-2.0 |
+| qrcode | 1.5.4 | MIT |
 | react | 19.3.1 | MIT |
 | react-dom | 19.3.1 | MIT |

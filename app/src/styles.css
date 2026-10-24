@@ -211,6 +211,9 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .device-login { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .user-code { font-size: 28px; font-weight: 700; letter-spacing: 0.15em; color: var(--accent-2); font-family: Consolas, monospace; }
 
+.remote-info { display: flex; gap: 22px; align-items: flex-start; margin-top: 16px; }
+.qr { width: 180px; height: 180px; border-radius: 8px; flex: none; }
+.remote-url { font-family: Consolas, monospace; font-size: 18px; color: var(--accent-2); margin-top: 4px; user-select: all; }
 .howto { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .spotify-now { display: flex; gap: 20px; align-items: center; }
 .spotify-now .cover { width: 120px; height: 120px; }

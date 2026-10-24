@@ -25,6 +25,31 @@ pub struct Settings {
     pub output: PlayOptions,
     /// Preferred streaming quality: "max" (up to 24/192), "cd" (16/44.1) or "lossy".
     pub stream_quality: StreamQuality,
+    pub remote: RemoteSettings,
+}
+
+/// Browser remote control on the local network.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RemoteSettings {
+    pub enabled: bool,
+    pub port: u16,
+    /// Asked for by the remote page before it can control the player.
+    pub pin: String,
+}
+
+impl Default for RemoteSettings {
+    fn default() -> Self {
+        Self { enabled: false, port: 8899, pin: new_pin() }
+    }
+}
+
+/// A random 6-digit PIN.
+pub fn new_pin() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    format!("{:06}", h.finish() % 1_000_000)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +66,8 @@ impl Settings {
         data_dir()
             .ok()
             .and_then(|d| std::fs::read(d.join("settings.json")).ok())
-            .and_then(|b| serde_json::from_slice(&b).ok())
+            // Tolerate a UTF-8 BOM (e.g. after editing the file in Notepad).
+            .and_then(|b| serde_json::from_slice(b.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&b)).ok())
             .unwrap_or_default()
     }
 
