@@ -219,6 +219,21 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .spotify-now .cover { width: 120px; height: 120px; }
 .spotify-now h2 { margin: 4px 0; }
 
+.small-btn svg { width: 18px; height: 18px; }
+.icon-btn.small-btn { border-radius: 14px; display: inline-flex; align-items: center; gap: 4px; }
+.sleep-label { font-size: 11px; font-variant-numeric: tabular-nums; }
+.menu-up { top: auto; bottom: 40px; right: 0; }
+.menu-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 6px 10px 4px; }
+.toggle { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.toggle input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); }
+.overlay { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 200; }
+.overlay-card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px; max-width: 520px; width: 92%; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 30px 80px #000c; }
+.overlay-card h2 { margin: 0; }
+.overlay-card button { align-self: flex-end; }
+.keys { border-collapse: collapse; }
+.keys td { padding: 5px 10px 5px 0; vertical-align: top; }
+kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; font-family: inherit; font-size: 12px; white-space: nowrap; }
+
 /* ---- Misc ---- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { border-radius: 16px; }

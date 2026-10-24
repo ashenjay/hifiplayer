@@ -142,6 +142,20 @@ export interface PlayerState {
   options: PlayOptions
   /** Spotify Connect is playing (shown instead of the queue item). */
   live?: QueueItem | null
+  shuffle: boolean
+  repeat: Repeat
+  sleep?: { endOfTrack: boolean; remaining?: number | null } | null
+  /** The DAC went away; the player is waiting for it. */
+  reconnecting: boolean
+}
+
+export type Repeat = 'off' | 'all' | 'one'
+export type SleepTimer = { kind: 'endOfTrack' } | { kind: 'minutes'; minutes: number }
+
+export interface DesktopSettings {
+  closeToTray: boolean
+  startWithWindows: boolean
+  globalHotkeys: boolean
 }
 
 /** The item to show as "now playing": Spotify if active, else the queue entry. */
@@ -162,6 +176,7 @@ export type StreamQuality = 'max' | 'cd' | 'lossy'
 export interface Settings {
   output: PlayOptions
   streamQuality: StreamQuality
+  desktop: DesktopSettings
 }
 
 export interface StreamAlbum {
@@ -248,6 +263,7 @@ export const api = {
   settings: () => invoke<Settings>('get_settings'),
   setOutput: (output: PlayOptions) => invoke<void>('set_output', { output }),
   setStreamQuality: (quality: StreamQuality) => invoke<void>('set_stream_quality', { quality }),
+  setDesktop: (desktop: DesktopSettings) => invoke<void>('set_desktop', { desktop }),
 
   servicesStatus: () => invoke<AccountStatus[]>('services_status'),
   qobuzSetCredentials: (appId: string, appSecret: string) => invoke<void>('qobuz_set_credentials', { appId, appSecret }),
@@ -282,6 +298,9 @@ export type PlayerCommand =
   | { type: 'jump'; index: number }
   | { type: 'remove'; index: number }
   | { type: 'clearQueue' }
+  | { type: 'setShuffle'; on: boolean }
+  | { type: 'setRepeat'; mode: Repeat }
+  | { type: 'setSleep'; timer: SleepTimer | null }
 
 // ---- Helpers -------------------------------------------------------------------
 

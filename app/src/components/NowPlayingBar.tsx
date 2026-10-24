@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, clock, currentItem } from '../api'
+import { api, clock, currentItem, type Repeat, type SleepTimer } from '../api'
 import { useNav } from '../nav'
 import { Cover, Icon } from './common'
 import { quality, SignalPathView } from './SignalPathView'
@@ -30,6 +30,55 @@ export function Seekbar({ position, duration }: { position: number; duration?: n
         onTouchEnd={commit}
       />
       <span className="time">{clock(duration)}</span>
+    </div>
+  )
+}
+
+export const nextRepeat = (r: Repeat): Repeat => (r === 'off' ? 'all' : r === 'all' ? 'one' : 'off')
+
+function KeyboardHint() {
+  return (
+    <button className="icon-btn small-btn" title="Keyboard shortcuts (?)" onClick={() => window.dispatchEvent(new Event('show-shortcuts'))}>
+      {Icon.keyboard}
+    </button>
+  )
+}
+
+/** Moon button: stop after this track or after N minutes. */
+function SleepButton() {
+  const { player } = useNav()
+  const [open, setOpen] = useState(false)
+  const anchor = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => {
+      if (!anchor.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+  const sleep = player?.sleep
+  const set = (timer: SleepTimer | null) => {
+    api.command({ type: 'setSleep', timer })
+    setOpen(false)
+  }
+  const label = sleep ? (sleep.endOfTrack ? 'End of track' : clock(sleep.remaining)) : null
+  return (
+    <div className="sp-anchor" ref={anchor}>
+      <button className={`icon-btn small-btn${sleep ? ' active' : ''}`} title="Sleep timer" onClick={() => setOpen((o) => !o)}>
+        {Icon.moon}
+        {label && <span className="sleep-label">{label}</span>}
+      </button>
+      {open && (
+        <div className="menu menu-up">
+          <div className="menu-title">Sleep timer</div>
+          <button onClick={() => set({ kind: 'endOfTrack' })}>Stop after this track</button>
+          {[15, 30, 45, 60, 90].map((m) => (
+            <button key={m} onClick={() => set({ kind: 'minutes', minutes: m })}>Pause in {m} minutes</button>
+          ))}
+          {sleep && <button onClick={() => set(null)}>Turn off sleep timer</button>}
+        </div>
+      )}
     </div>
   )
 }
@@ -79,6 +128,14 @@ export function NowPlayingBar() {
 
       <div className="now-center">
         <div className="transport">
+          <button
+            className={`icon-btn small-btn${player?.shuffle ? ' active' : ''}`}
+            title={player?.shuffle ? 'Shuffle on (S)' : 'Shuffle off (S)'}
+            onClick={() => api.command({ type: 'setShuffle', on: !player?.shuffle })}
+            disabled={!!player?.live}
+          >
+            {Icon.shuffle}
+          </button>
           <button className="icon-btn" title="Previous" onClick={() => api.command({ type: 'previous' })} disabled={!item}>
             {Icon.prev}
           </button>
@@ -87,6 +144,14 @@ export function NowPlayingBar() {
           </button>
           <button className="icon-btn" title="Next" onClick={() => api.command({ type: 'next' })} disabled={!item}>
             {Icon.next}
+          </button>
+          <button
+            className={`icon-btn small-btn${player && player.repeat !== 'off' ? ' active' : ''}`}
+            title={`Repeat: ${player?.repeat ?? 'off'} (R)`}
+            onClick={() => api.command({ type: 'setRepeat', mode: nextRepeat(player?.repeat ?? 'off') })}
+            disabled={!!player?.live}
+          >
+            {player?.repeat === 'one' ? Icon.repeatOne : Icon.repeat}
           </button>
         </div>
         <Seekbar position={player?.position ?? 0} duration={player?.duration ?? item?.duration} />
@@ -106,7 +171,13 @@ export function NowPlayingBar() {
             )}
           </div>
         )}
-        {player?.status === 'loading' && <span className="muted small">Loading…</span>}
+        {player?.reconnecting ? (
+          <span className="warn small" title="The DAC was disconnected; playback continues when it is back">Waiting for DAC…</span>
+        ) : (
+          player?.status === 'loading' && <span className="muted small">Loading…</span>
+        )}
+        <SleepButton />
+        {item && <KeyboardHint />}
         {!!player?.underruns && <span className="warn small" title="The decoder could not keep up">{player.underruns} dropouts</span>}
         <button
           className={`icon-btn${view.name === 'queue' ? ' active' : ''}`}

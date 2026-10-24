@@ -30,6 +30,7 @@ const queue: QueueItem[] = tracks.map((t) => ({
 
 const state: PlayerState = {
   status: 'playing', queue, index: 0, position: 83, duration: 391, underruns: 0, error: null,
+  shuffle: false, repeat: 'off', sleep: null, reconnecting: false,
   options: { backend: 'asio', device: 'iFi USB Audio Device', dsd_mode: 'auto' },
   signalPath: {
     source: 'DSF · DSD64 (2.8224 MHz), 2 ch', processing: 'None (native DSD64)',
@@ -63,7 +64,7 @@ const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
     { backend: 'wasapi', name: 'Speakers (AMR HD+ USB Audio)', details: 'Exclusive mode, PCM up to 24/32-bit at 44.1–768 kHz' },
     { backend: 'asio', name: 'iFi USB Audio Device', details: '2 outputs, 32-bit int, native DSD: DSD64/DSD128/DSD256/DSD512' },
   ],
-  get_settings: () => ({ output: state.options, streamQuality: 'max' }),
+  get_settings: () => ({ output: state.options, streamQuality: 'max', desktop: { closeToTray: true, startWithWindows: false, globalHotkeys: true } }),
   services_status: () => [
     { service: 'qobuz', configured: true, loggedIn: true, user: 'Demo user', plan: 'Studio' },
     { service: 'tidal', configured: false, loggedIn: false },

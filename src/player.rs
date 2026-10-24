@@ -4,10 +4,11 @@
 //! `Playback`. Commands arrive over a channel; state is published in a mutex
 //! that the UI polls (or the app pushes as events).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,57 @@ pub struct PlayerState {
     pub options: PlayOptions,
     /// Set while Spotify Connect is the source (shown instead of the queue item).
     pub live: Option<QueueItem>,
+    pub shuffle: bool,
+    pub repeat: Repeat,
+    pub sleep: Option<SleepState>,
+    /// The DAC disappeared mid-track; the player is waiting for it to come back.
+    pub reconnecting: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Repeat {
+    #[default]
+    Off,
+    All,
+    One,
+}
+
+impl Repeat {
+    /// The track that follows `after` when a track ends by itself.
+    fn follow(self, after: usize, len: usize) -> Option<usize> {
+        match self {
+            Repeat::One if after < len => Some(after),
+            Repeat::All if len > 0 => Some((after + 1) % len),
+            _ => (after + 1 < len).then_some(after + 1),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SleepTimer {
+    /// Stop when the current track ends.
+    EndOfTrack,
+    Minutes { minutes: u32 },
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SleepState {
+    pub end_of_track: bool,
+    /// Seconds left for a timed sleep.
+    pub remaining: Option<f64>,
+}
+
+/// Queue and position, saved so playback can resume after a restart.
+#[derive(Serialize, Deserialize)]
+struct Session {
+    queue: Vec<QueueItem>,
+    index: Option<usize>,
+    position: f64,
+    shuffle: bool,
+    repeat: Repeat,
 }
 
 pub enum Command {
@@ -77,6 +129,9 @@ pub enum Command {
     Shutdown(Sender<()>),
     /// Spotify Connect changed state (sent by the spotify module).
     Spotify(SpotifyEvent),
+    SetShuffle(bool),
+    SetRepeat(Repeat),
+    SetSleep(Option<SleepTimer>),
 }
 
 #[derive(Clone)]
@@ -87,24 +142,47 @@ pub struct Player {
 
 impl Player {
     pub fn new(options: PlayOptions) -> Self {
+        // Pick up the queue and position from the last run (not playing yet).
+        let session = load_session();
+        let (queue, index, position, shuffle, repeat) = match session {
+            Some(s) => (s.queue, s.index, s.position, s.shuffle, s.repeat),
+            None => (Vec::new(), None, 0.0, false, Repeat::Off),
+        };
+        let duration = index.and_then(|i| queue.get(i)).and_then(|q| q.duration);
         let state = Arc::new(Mutex::new(PlayerState {
             status: Status::Stopped,
-            queue: Vec::new(),
-            index: None,
-            position: 0.0,
-            duration: None,
+            queue: queue.clone(),
+            index,
+            position,
+            duration,
             signal_path: None,
             underruns: 0,
             error: None,
             options,
             live: None,
+            shuffle,
+            repeat,
+            sleep: None,
+            reconnecting: false,
         }));
         let (tx, rx) = mpsc::channel();
         let st = state.clone();
         thread::Builder::new()
             .name("player".into())
             .spawn(move || {
-                Control { state: st, queue: Arc::new(Mutex::new(Vec::new())), current: None, spotify: false }.run(rx)
+                Control {
+                    state: st,
+                    queue: Arc::new(Mutex::new(queue)),
+                    current: None,
+                    spotify: false,
+                    repeat: Arc::new(Mutex::new(repeat)),
+                    unshuffled: None,
+                    stop_after_track: Arc::new(AtomicBool::new(false)),
+                    sleep_at: None,
+                    reconnect: None,
+                    last_saved: Instant::now(),
+                }
+                .run(rx)
             })
             .expect("spawn player thread");
         Self { tx, state }
@@ -138,6 +216,48 @@ struct Control {
     current: Option<Playback>,
     /// Spotify Connect owns the current stream.
     spotify: bool,
+    /// Shared with the decoder's "next track" callback.
+    repeat: Arc<Mutex<Repeat>>,
+    /// The queue in its original order while shuffle is on.
+    unshuffled: Option<Vec<QueueItem>>,
+    /// Sleep timer "end of track": the decoder stops instead of continuing.
+    stop_after_track: Arc<AtomicBool>,
+    sleep_at: Option<Instant>,
+    reconnect: Option<Reconnect>,
+    last_saved: Instant,
+}
+
+/// Waiting for a DAC that disappeared mid-playback.
+struct Reconnect {
+    index: usize,
+    position: f64,
+    next_try: Instant,
+    give_up: Instant,
+}
+
+fn session_path() -> Option<std::path::PathBuf> {
+    crate::settings::data_dir().ok().map(|d| d.join("session.json"))
+}
+
+fn load_session() -> Option<Session> {
+    let s: Session = serde_json::from_slice(&std::fs::read(session_path()?).ok()?).ok()?;
+    // Drop the position if the queue changed shape since.
+    Some(Session { index: s.index.filter(|i| *i < s.queue.len()), ..s })
+}
+
+/// Pseudo-random shuffle (good enough for a play order).
+fn shuffle_items<T>(items: &mut [T]) {
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9e37_79b9_7f4a_7c15)
+        | 1;
+    for i in (1..items.len()).rev() {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        items.swap(i, (seed % (i as u64 + 1)) as usize);
+    }
 }
 
 impl Control {
@@ -194,10 +314,62 @@ impl Control {
         }
         match cmd {
             Command::Spotify(ev) => self.on_spotify(ev),
-            Command::PlayQueue { items, start } => {
+            Command::PlayQueue { mut items, mut start } => {
+                self.unshuffled = None;
+                if self.state.lock().unwrap().shuffle && !items.is_empty() {
+                    // Keep the chosen track first, shuffle the rest.
+                    self.unshuffled = Some(items.clone());
+                    let first = items.remove(start.min(items.len() - 1));
+                    shuffle_items(&mut items);
+                    items.insert(0, first);
+                    start = 0;
+                }
                 *self.queue.lock().unwrap() = items;
                 self.sync_queue();
                 self.play_at(start, 0.0);
+            }
+            Command::SetShuffle(on) => {
+                self.state.lock().unwrap().shuffle = on;
+                let cur = self.index();
+                let mut q = self.queue.lock().unwrap();
+                let current = cur.and_then(|i| q.get(i).cloned());
+                if on {
+                    self.unshuffled = Some(q.clone());
+                    // Everything after the current track gets shuffled.
+                    let from = cur.map(|i| i + 1).unwrap_or(0).min(q.len());
+                    shuffle_items(&mut q[from..]);
+                } else if let Some(orig) = self.unshuffled.take() {
+                    *q = orig;
+                    let new_index = current.and_then(|c| q.iter().position(|it| *it == c));
+                    drop(q);
+                    self.state.lock().unwrap().index = new_index.or(cur);
+                    self.sync_queue();
+                    self.restart_chain();
+                    return;
+                }
+                drop(q);
+                self.sync_queue();
+                self.restart_chain();
+            }
+            Command::SetRepeat(r) => {
+                *self.repeat.lock().unwrap() = r;
+                self.state.lock().unwrap().repeat = r;
+                self.restart_chain();
+            }
+            Command::SetSleep(timer) => {
+                self.stop_after_track.store(false, Ordering::Relaxed);
+                self.sleep_at = None;
+                match timer {
+                    Some(SleepTimer::EndOfTrack) => {
+                        self.stop_after_track.store(true, Ordering::Relaxed);
+                        self.restart_chain();
+                    }
+                    Some(SleepTimer::Minutes { minutes }) => {
+                        self.sleep_at = Some(Instant::now() + Duration::from_secs(minutes as u64 * 60));
+                    }
+                    None => self.restart_chain(),
+                }
+                self.update_sleep_state();
             }
             Command::Enqueue(items) => {
                 let start_now = self.current.is_none() && self.queue.lock().unwrap().is_empty();
@@ -265,10 +437,15 @@ impl Control {
             },
             Command::Next => {
                 if let Some(i) = self.index() {
-                    if i + 1 < self.queue.lock().unwrap().len() {
-                        self.play_at(i + 1, 0.0);
-                    } else {
-                        self.stop_current();
+                    let len = self.queue.lock().unwrap().len();
+                    // The Next button always moves on, even with repeat-one.
+                    let repeat = match *self.repeat.lock().unwrap() {
+                        Repeat::One => Repeat::Off,
+                        r => r,
+                    };
+                    match repeat.follow(i, len) {
+                        Some(n) => self.play_at(n, 0.0),
+                        None => self.stop_current(),
                     }
                 }
             }
@@ -289,8 +466,13 @@ impl Control {
                     }
                 }
             }
-            Command::Stop => self.stop_current(),
+            Command::Stop => {
+                self.reconnect = None;
+                self.state.lock().unwrap().reconnecting = false;
+                self.stop_current();
+            }
             Command::Shutdown(ack) => {
+                self.save_session();
                 self.stop_current();
                 let _ = ack.send(());
             }
@@ -315,42 +497,139 @@ impl Control {
         st.signal_path = None;
     }
 
-    /// Start playback at queue position `i` from `secs`, skipping tracks that fail to open.
+    /// The decoder's "what comes next" callback: follows repeat mode, and
+    /// stops after the current track when the sleep timer says so.
+    fn next_fn(&self) -> engine::NextFn {
+        let queue = self.queue.clone();
+        let repeat = self.repeat.clone();
+        let stop = self.stop_after_track.clone();
+        Box::new(move |after| {
+            if stop.load(Ordering::Relaxed) {
+                return None;
+            }
+            let q = queue.lock().unwrap();
+            let r = *repeat.lock().unwrap();
+            r.follow(after, q.len()).map(|n| (n, q[n].media.clone()))
+        })
+    }
+
+    /// Restart the current track at its position, so the decoder picks up a
+    /// changed queue order / repeat / sleep setting for what comes next.
+    fn restart_chain(&mut self) {
+        if self.spotify {
+            return;
+        }
+        let Some(p) = &self.current else { return };
+        if p.is_paused() {
+            // The next track is opened only when this one ends; a paused
+            // stream is restarted on resume anyway if needed.
+            return;
+        }
+        if let Some(i) = self.index() {
+            let pos = self.position();
+            self.play_at(i, pos);
+        }
+    }
+
+    /// Start playback at queue position `i` from `secs`, skipping tracks that
+    /// fail to open (giving up after three in a row).
     fn play_at(&mut self, mut i: usize, secs: f64) {
         self.stop_current();
         let mut secs = secs;
+        let mut failures = 0;
         loop {
             let Some(item) = self.queue.lock().unwrap().get(i).cloned() else {
                 self.state.lock().unwrap().status = Status::Stopped;
                 return;
             };
-            {
-                let mut st = self.state.lock().unwrap();
-                st.index = Some(i);
-                st.position = secs;
-                st.duration = item.duration;
-                st.status = Status::Loading;
-            }
-            let queue = self.queue.clone();
-            let next: engine::NextFn = Box::new(move |after| {
-                let q = queue.lock().unwrap();
-                q.get(after + 1).map(|it| (after + 1, it.media.clone()))
-            });
-            match engine::start(i, &item.media, secs, &self.opts(), next) {
-                Ok(p) => {
-                    let mut st = self.state.lock().unwrap();
-                    st.signal_path = Some(p.path.clone());
-                    st.status = Status::Playing;
-                    st.underruns = 0;
-                    drop(st);
-                    self.current = Some(p);
-                    return;
-                }
+            match self.start_once(i, secs) {
+                Ok(()) => return,
                 Err(e) => {
                     self.state.lock().unwrap().error = Some(format!("{}: {e:#}", item.title));
+                    failures += 1;
+                    if failures >= 3 {
+                        self.state.lock().unwrap().status = Status::Stopped;
+                        return;
+                    }
                     i += 1;
                     secs = 0.0;
                 }
+            }
+        }
+    }
+
+    /// Try to start one track (no skipping).
+    fn start_once(&mut self, i: usize, secs: f64) -> anyhow::Result<()> {
+        let item = self.queue.lock().unwrap().get(i).cloned().ok_or_else(|| anyhow::anyhow!("no such track"))?;
+        {
+            let mut st = self.state.lock().unwrap();
+            st.index = Some(i);
+            st.position = secs;
+            st.duration = item.duration;
+            st.status = Status::Loading;
+        }
+        let p = engine::start(i, &item.media, secs, &self.opts(), self.next_fn())?;
+        let mut st = self.state.lock().unwrap();
+        st.signal_path = Some(p.path.clone());
+        st.status = Status::Playing;
+        st.underruns = 0;
+        drop(st);
+        self.current = Some(p);
+        Ok(())
+    }
+
+    fn update_sleep_state(&self) {
+        let end = self.stop_after_track.load(Ordering::Relaxed);
+        let remaining = self.sleep_at.map(|t| t.saturating_duration_since(Instant::now()).as_secs_f64());
+        self.state.lock().unwrap().sleep =
+            (end || remaining.is_some()).then_some(SleepState { end_of_track: end, remaining });
+    }
+
+    fn save_session(&mut self) {
+        self.last_saved = Instant::now();
+        let st = self.state.lock().unwrap();
+        let session = Session {
+            queue: self.queue.lock().unwrap().clone(),
+            index: st.index,
+            position: if st.live.is_some() { 0.0 } else { st.position },
+            shuffle: st.shuffle,
+            repeat: st.repeat,
+        };
+        drop(st);
+        if let (Some(path), Ok(json)) = (session_path(), serde_json::to_vec(&session)) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+
+    /// Retry a DAC that went away, every two seconds for up to a minute.
+    fn try_reconnect(&mut self) {
+        let Some(r) = &self.reconnect else { return };
+        if Instant::now() < r.next_try {
+            return;
+        }
+        let (index, position, give_up) = (r.index, r.position, r.give_up);
+        match self.start_once(index, position) {
+            Ok(()) => {
+                self.reconnect = None;
+                let mut st = self.state.lock().unwrap();
+                st.reconnecting = false;
+                st.error = Some("The audio device is back, playback continues.".into());
+            }
+            Err(e) if Instant::now() >= give_up => {
+                self.reconnect = None;
+                let mut st = self.state.lock().unwrap();
+                st.reconnecting = false;
+                st.status = Status::Stopped;
+                st.position = position;
+                st.error = Some(format!("The audio device did not come back: {e:#}"));
+            }
+            Err(_) => {
+                if let Some(r) = &mut self.reconnect {
+                    r.next_try = Instant::now() + Duration::from_secs(2);
+                }
+                let mut st = self.state.lock().unwrap();
+                st.status = Status::Loading;
+                st.position = position;
             }
         }
     }
@@ -433,6 +712,26 @@ impl Control {
 
     /// Follow the audible position, and continue the queue when a stream ends.
     fn tick(&mut self) {
+        if self.last_saved.elapsed() > Duration::from_secs(5) {
+            self.save_session();
+        }
+        if self.reconnect.is_some() {
+            self.try_reconnect();
+            return;
+        }
+        if let Some(t) = self.sleep_at {
+            if Instant::now() >= t {
+                // Time's up: pause (keeps the position) and clear the timer.
+                self.sleep_at = None;
+                if self.spotify {
+                    spotify::remote(Remote::Pause);
+                } else if let Some(p) = &self.current {
+                    p.set_paused(true);
+                    self.state.lock().unwrap().status = Status::Paused;
+                }
+            }
+            self.update_sleep_state();
+        }
         if self.spotify {
             self.update_spotify_state();
             let finished = self.current.as_ref().is_none_or(|p| p.is_finished());
@@ -460,19 +759,44 @@ impl Control {
         if !p.is_finished() {
             return;
         }
+        let played = pos;
         let p = self.current.take().unwrap();
         match p.wait() {
             Ok(Some((next, _))) => self.play_at(next, 0.0),
             Ok(None) => {
+                if self.stop_after_track.swap(false, Ordering::Relaxed) {
+                    // Sleep timer "end of track": stop on the next track, ready to resume.
+                    let len = self.queue.lock().unwrap().len();
+                    let next = (*self.repeat.lock().unwrap()).follow(played.index, len);
+                    let mut st = self.state.lock().unwrap();
+                    st.index = next.or(Some(played.index));
+                    st.position = 0.0;
+                    st.status = Status::Stopped;
+                    st.signal_path = None;
+                    drop(st);
+                    self.update_sleep_state();
+                    return;
+                }
                 let mut st = self.state.lock().unwrap();
                 st.status = Status::Stopped;
                 st.signal_path = None;
                 st.position = 0.0;
             }
             Err(e) => {
-                let cur = self.index().unwrap_or(0);
-                self.state.lock().unwrap().error = Some(format!("Playback stopped: {e:#}"));
-                self.play_at(cur + 1, 0.0);
+                // Usually the DAC was unplugged or its driver reset: wait for it
+                // and continue from the same spot instead of skipping tracks.
+                let mut st = self.state.lock().unwrap();
+                st.error = Some(format!("Audio device lost ({e:#}). Waiting for it to come back…"));
+                st.reconnecting = true;
+                st.status = Status::Loading;
+                st.signal_path = None;
+                drop(st);
+                self.reconnect = Some(Reconnect {
+                    index: played.index,
+                    position: played.secs,
+                    next_try: Instant::now() + Duration::from_secs(2),
+                    give_up: Instant::now() + Duration::from_secs(60),
+                });
             }
         }
     }

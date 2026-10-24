@@ -7,8 +7,8 @@ use std::time::Duration;
 use hifiplayer::engine::PlayOptions;
 use hifiplayer::library::{Album, Artist, Library, ScanReport, Stats, Track};
 use hifiplayer::output::{self, DeviceInfo};
-use hifiplayer::player::{Command, Player, PlayerState, QueueItem, Status};
-use hifiplayer::settings::{Settings, StreamQuality};
+use hifiplayer::player::{Command, Player, PlayerState, QueueItem, Repeat, SleepTimer, Status};
+use hifiplayer::settings::{DesktopSettings, Settings, StreamQuality};
 use hifiplayer::source::{Media, set_stream_resolver};
 use hifiplayer::spotify::{self, SpotifyStatus};
 use hifiplayer::streaming::tidal::{DeviceLogin, LoginPoll};
@@ -16,6 +16,7 @@ use hifiplayer::streaming::{AccountStatus, ArtistPage, SearchResults, Services, 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
+mod desktop;
 mod remote;
 
 struct AppState {
@@ -141,6 +142,9 @@ enum PlayerCmd {
     Jump { index: usize },
     Remove { index: usize },
     ClearQueue,
+    SetShuffle { on: bool },
+    SetRepeat { mode: Repeat },
+    SetSleep { timer: Option<SleepTimer> },
 }
 
 #[tauri::command]
@@ -154,7 +158,24 @@ fn player_command(state: State<'_, AppState>, cmd: PlayerCmd) {
         PlayerCmd::Jump { index } => Command::Jump(index),
         PlayerCmd::Remove { index } => Command::Remove(index),
         PlayerCmd::ClearQueue => Command::ClearQueue,
+        PlayerCmd::SetShuffle { on } => Command::SetShuffle(on),
+        PlayerCmd::SetRepeat { mode } => Command::SetRepeat(mode),
+        PlayerCmd::SetSleep { timer } => Command::SetSleep(timer),
     });
+}
+
+// ---- Desktop integration ------------------------------------------------------------
+
+#[tauri::command]
+fn set_desktop(app: tauri::AppHandle, state: State<'_, AppState>, desktop: DesktopSettings) -> Res<()> {
+    use tauri_plugin_autostart::ManagerExt;
+    let launcher = app.autolaunch();
+    let result = if desktop.start_with_windows { launcher.enable() } else { launcher.disable() };
+    result.map_err(|e| format!("Could not change \"start with Windows\": {e}"))?;
+    desktop::set_global_hotkeys(&app, desktop.global_hotkeys);
+    let mut s = state.settings.lock().unwrap();
+    s.desktop = desktop;
+    s.save().map_err(anyhow_err)
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -369,11 +390,47 @@ pub fn run() {
     // Persist the generated PIN so it stays the same across restarts.
     let _ = settings.save();
 
+    let hotkey_player = player.clone();
+    let desktop_settings = settings.desktop.clone();
+
     tauri::Builder::default()
+        // A second launch just brings the running window forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| desktop::show_main(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |_app, shortcut, event| desktop::on_hotkey(&hotkey_player, shortcut, event.state()))
+                .build(),
+        )
         .manage(AppState { player, library: Mutex::new(library), services, settings: Mutex::new(settings), remote })
-        .setup(|app| {
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let to_tray = window.app_handle().state::<AppState>().settings.lock().unwrap().desktop.close_to_tray;
+                if to_tray && window.label() == "main" {
+                    // Keep playing in the tray; quit from the tray menu.
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .setup(move |app| {
+            let player = app.state::<AppState>().player.clone();
+            if let Err(e) = desktop::create_tray(app.handle(), player.clone()) {
+                eprintln!("tray icon: {e}");
+            }
+            desktop::start_media_controls(app.handle(), player);
+            desktop::set_global_hotkeys(app.handle(), desktop_settings.global_hotkeys);
+            if std::env::args().any(|a| a == "--minimized")
+                && let Some(w) = app.get_webview_window("main")
+            {
+                let _ = w.hide();
+            }
+
             // Push player state to the UI four times a second.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -423,6 +480,7 @@ pub fn run() {
             remote_status,
             remote_set_enabled,
             remote_new_pin,
+            set_desktop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app")

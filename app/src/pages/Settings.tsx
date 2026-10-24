@@ -4,7 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { useEffect, useRef, useState } from 'react'
 import {
   api, inTauri, listen,
-  type AccountStatus, type Backend, type DeviceInfo, type DeviceLogin, type DsdMode, type PlayOptions, type ScanReport, type StreamQuality,
+  type AccountStatus, type Backend, type DesktopSettings, type DeviceInfo, type DeviceLogin, type DsdMode, type PlayOptions, type ScanReport, type StreamQuality,
 } from '../api'
 import { ErrorBox, Loading, useLoad } from '../components/common'
 import { useNav } from '../nav'
@@ -19,8 +19,37 @@ export function SettingsPage() {
       <LibrarySettings />
       <StreamingSettings />
       <RemoteCard />
+      <WindowsSettings />
       <About />
     </div>
+  )
+}
+
+function WindowsSettings() {
+  const { toast } = useNav()
+  const [settings] = useLoad(() => api.settings(), [])
+  const [d, setD] = useState<DesktopSettings>()
+  useEffect(() => { if (settings && !d) setD(settings.desktop) }, [settings, d])
+  if (!d) return null
+  const update = (patch: Partial<DesktopSettings>) => {
+    const next = { ...d, ...patch }
+    setD(next)
+    api.setDesktop(next).catch((e) => { toast(String(e)); setD(d) })
+  }
+  const Toggle = ({ k, label, hint }: { k: keyof DesktopSettings; label: string; hint: string }) => (
+    <label className="toggle">
+      <input type="checkbox" checked={d[k]} onChange={(e) => update({ [k]: e.target.checked })} />
+      <span><b>{label}</b><br /><span className="muted small">{hint}</span></span>
+    </label>
+  )
+  return (
+    <section className="card">
+      <h2>Windows</h2>
+      <Toggle k="closeToTray" label="Keep playing in the tray when the window is closed" hint="Quit from the tray icon menu. Turn off to quit when you close the window." />
+      <Toggle k="startWithWindows" label="Start with Windows" hint="Starts minimised to the tray when you sign in." />
+      <Toggle k="globalHotkeys" label="Global hotkeys" hint="Ctrl+Alt+Space play/pause, Ctrl+Alt+← / → previous/next, even when HiFi Player is in the background." />
+      <p className="muted small">Keyboard media keys and the Windows media overlay (volume popup and lock screen) always work.</p>
+    </section>
   )
 }
 

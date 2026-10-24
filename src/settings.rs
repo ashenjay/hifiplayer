@@ -26,6 +26,23 @@ pub struct Settings {
     /// Preferred streaming quality: "max" (up to 24/192), "cd" (16/44.1) or "lossy".
     pub stream_quality: StreamQuality,
     pub remote: RemoteSettings,
+    pub desktop: DesktopSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DesktopSettings {
+    /// Closing the window hides it to the tray and keeps playing.
+    pub close_to_tray: bool,
+    pub start_with_windows: bool,
+    /// Ctrl+Alt+Space / → / ← work while other apps have focus.
+    pub global_hotkeys: bool,
+}
+
+impl Default for DesktopSettings {
+    fn default() -> Self {
+        Self { close_to_tray: true, start_with_windows: false, global_hotkeys: true }
+    }
 }
 
 /// Browser remote control on the local network.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, listen, type PlayerState } from './api'
 import { Icon } from './components/common'
-import { NowPlayingBar } from './components/NowPlayingBar'
+import { NowPlayingBar, nextRepeat } from './components/NowPlayingBar'
 import { NavContext, type View } from './nav'
 import { AlbumPage, AlbumsPage, ArtistPage, ArtistsPage, SearchPage } from './pages/Library'
 import { NowPlayingPage, QueuePage } from './pages/Player'
@@ -39,6 +39,41 @@ const sections: { view: View; label: string; icon: React.ReactNode }[] = [
 const sameSection = (a: View, b: View) =>
   a.name === b.name && (a.name !== 'service' || (b.name === 'service' && a.service === b.service))
 
+const SHORTCUTS: [string, string][] = [
+  ['Space', 'Play / pause'],
+  ['← / →', 'Seek back / forward 10 s'],
+  ['Ctrl + ← / →', 'Previous / next track'],
+  ['S', 'Shuffle on / off'],
+  ['R', 'Repeat: off → all → one'],
+  ['/ or Ctrl + F', 'Search'],
+  ['Q', 'Queue'],
+  ['N', 'Now playing'],
+  ['Alt + ←', 'Back'],
+  ['?', 'Show / hide this list'],
+  ['Ctrl + Alt + Space', 'Play / pause (anywhere in Windows)'],
+  ['Ctrl + Alt + ← / →', 'Previous / next (anywhere in Windows)'],
+  ['Media keys', 'Play / pause, next, previous'],
+]
+
+function ShortcutHelp({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="overlay-card" onClick={(e) => e.stopPropagation()}>
+        <h2>Keyboard shortcuts</h2>
+        <table className="keys">
+          <tbody>
+            {SHORTCUTS.map(([k, d]) => (
+              <tr key={k}><td><kbd>{k}</kbd></td><td>{d}</td></tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="muted small">The “anywhere in Windows” shortcuts can be turned off in Settings → Windows.</div>
+        <button onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [stack, setStack] = useState<View[]>([{ name: 'albums' }])
   const [player, setPlayer] = useState<PlayerState | null>(null)
@@ -74,20 +109,42 @@ export default function App() {
     return () => { un.then((f) => f()) }
   }, [toast])
 
-  // Space = play/pause, Alt+Left = back (when not typing).
+  // Keyboard shortcuts (ignored while typing in a field). Press ? for the list.
+  const [showKeys, setShowKeys] = useState(false)
+  const playerRef = useRef(player)
+  playerRef.current = player
   useEffect(() => {
+    const open = () => setShowKeys(true)
+    window.addEventListener('show-shortcuts', open)
     const onKey = (e: KeyboardEvent) => {
       const typing = (e.target as HTMLElement)?.closest('input, textarea, select')
-      if (e.code === 'Space' && !typing) {
+      const p = playerRef.current
+      if (e.key === 'Escape') return setShowKeys(false)
+      if (e.altKey && e.key === 'ArrowLeft') return back()
+      if (typing) return
+      const k = e.key.toLowerCase()
+      const run = (f: () => void) => {
         e.preventDefault()
-        api.command({ type: 'togglePause' })
-      } else if (e.altKey && e.key === 'ArrowLeft') {
-        back()
+        f()
       }
+      if (e.code === 'Space') run(() => api.command({ type: 'togglePause' }))
+      else if (e.ctrlKey && e.key === 'ArrowRight') run(() => api.command({ type: 'next' }))
+      else if (e.ctrlKey && e.key === 'ArrowLeft') run(() => api.command({ type: 'previous' }))
+      else if (e.key === 'ArrowRight' && p) run(() => api.command({ type: 'seek', secs: p.position + 10 }))
+      else if (e.key === 'ArrowLeft' && p) run(() => api.command({ type: 'seek', secs: Math.max(0, p.position - 10) }))
+      else if (k === 's' && !e.ctrlKey && p) run(() => api.command({ type: 'setShuffle', on: !p.shuffle }))
+      else if (k === 'r' && !e.ctrlKey && p) run(() => api.command({ type: 'setRepeat', mode: nextRepeat(p.repeat) }))
+      else if (e.key === '/' || (e.ctrlKey && k === 'f')) run(() => document.querySelector<HTMLInputElement>('.search input')?.focus())
+      else if (k === 'q' && !e.ctrlKey) run(() => go({ name: 'queue' }))
+      else if (k === 'n' && !e.ctrlKey) run(() => go({ name: 'nowPlaying' }))
+      else if (e.key === '?') run(() => setShowKeys((s) => !s))
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [back])
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('show-shortcuts', open)
+    }
+  }, [back, go])
 
   return (
     <NavContext.Provider value={{ view, go, back, canGoBack: stack.length > 1, player, toast }}>
@@ -132,6 +189,8 @@ export default function App() {
         </div>
 
         <NowPlayingBar />
+
+        {showKeys && <ShortcutHelp onClose={() => setShowKeys(false)} />}
 
         <div className="toasts">
           {toasts.map((t) => (
