@@ -55,6 +55,15 @@ const tracksFull = tracks.map((t) => ({ ...t, rating: t.trackNo === 1 ? 5 : 0, f
 
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
   album_extras: () => [],
+  similar_albums: () => albumsFull.slice(2, 7),
+  on_this_day: () => ({ played: [[3, albumsFull[1]]], anniversaries: [[50, albumsFull[0]], [40, albumsFull[2]]] }),
+  artist_info: (args) => ({
+    name: args?.name, kind: 'Group', country: 'United States', active: 'since 1971',
+    bio: 'The Eagles are an American rock band formed in Los Angeles in 1971. With five number-one singles and six number-one albums, they were one of the most successful musical acts of the 1970s.',
+    url: 'https://en.wikipedia.org/wiki/Eagles_(band)',
+  }),
+  scrobble_status: () => ({ listenbrainzUser: 'ashen', lastfmUser: null, lastfmHasKey: false, pending: 0 }),
+  dlna_status: () => ({ renderer: true, server: false, name: 'HiFi Player (PC)', address: 'http://192.168.1.20:8897' }),
   cover_colors: () => ['#3f6d4e', '#c9a34a'],
   track_lyrics: () => ({
     source: 'lrc file',
@@ -95,7 +104,7 @@ const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
     { backend: 'wasapi', name: 'Speakers (AMR HD+ USB Audio)', details: 'Exclusive mode, PCM up to 24/32-bit at 44.1–768 kHz' },
     { backend: 'asio', name: 'iFi USB Audio Device', details: '2 outputs, 32-bit int, native DSD: DSD64/DSD128/DSD256/DSD512' },
   ],
-  get_settings: () => ({ devices: {}, fallback: null, output: state.options, streamQuality: 'max', desktop: { closeToTray: true, startWithWindows: false, globalHotkeys: true } }),
+  get_settings: () => ({ online: { lookupInfo: true, discord: false, discordAppId: '', dlnaRenderer: true, dlnaServer: false, dlnaName: 'HiFi Player (PC)', dlnaPort: 8897 }, devices: {}, fallback: null, output: state.options, streamQuality: 'max', desktop: { closeToTray: true, startWithWindows: false, globalHotkeys: true } }),
   services_status: () => [
     { service: 'qobuz', configured: true, loggedIn: true, user: 'Demo user', plan: 'Studio' },
     { service: 'tidal', configured: false, loggedIn: false },

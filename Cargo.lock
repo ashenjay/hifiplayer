@@ -2154,9 +2154,11 @@ dependencies = [
  "anyhow",
  "hifiplayer",
  "image",
+ "md5",
  "notify-debouncer-mini",
  "serde",
  "serde_json",
+ "socket2",
  "souvlaki",
  "tauri",
  "tauri-build",
@@ -2166,6 +2168,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tiny_http",
+ "ureq",
  "windows 0.61.3",
 ]
 

@@ -7,6 +7,7 @@ pub mod convert;
 pub mod dsd;
 pub mod engine;
 pub mod library;
+pub mod online;
 pub mod output;
 pub mod player;
 pub mod settings;

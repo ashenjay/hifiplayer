@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { api, clock, trackItems, type Album, type QueueItem, type Track } from '../api'
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { api, clock, inTauri, trackItems, type Album, type QueueItem, type Track } from '../api'
 import { AlbumGrid } from '../components/AlbumGrid'
 import { Cover, ErrorBox, Icon, Loading, QualityBadge, useLoad } from '../components/common'
 import { TrackList } from '../components/TrackList'
@@ -163,6 +164,9 @@ function AlbumView({
             <button className={`heart-btn${album.favorite ? ' on' : ''}`} title={album.favorite ? 'Remove from favourites' : 'Add to favourites'} onClick={toggleFav}>
               {album.favorite ? '♥' : '♡'}
             </button>
+            <button onClick={() => api.startRadio({ kind: 'album', id: album.id }).then((n) => toast(`Radio: ${n} tracks`)).catch((e) => toast(String(e)))}>
+              Radio
+            </button>
             <AlbumTools album={album} />
           </div>
         </div>
@@ -178,6 +182,7 @@ function AlbumView({
         showArtist
         play={(its, start, mode) => api.playItems(its, start, mode).catch((e) => toast(String(e)))}
       />
+      <SimilarAlbums id={album.id} />
       {versions && versions.length > 0 && (
         <>
           <h2>Other versions in your library</h2>
@@ -231,16 +236,43 @@ export function ArtistsPage() {
 export function ArtistPage({ artist }: { artist: string }) {
   const { go, toast, libVersion } = useNav()
   const [albums, error] = useLoad(() => api.artistAlbums(artist), [artist, libVersion])
+  const [info] = useLoad(() => api.artistInfo(artist).catch(() => null), [artist])
+  const [more, setMore] = useState(false)
   if (error) return <ErrorBox error={error} />
   if (!albums) return <Loading />
+  const facts = info ? [info.kind, info.country, info.active].filter(Boolean).join(' · ') : ''
   return (
     <div>
       <div className="page-head">
         <div>
           <div className="eyebrow">Artist</div>
           <h1>{artist}</h1>
+          {facts && <div className="muted">{facts}</div>}
+        </div>
+        <div className="toolbar">
+          <button onClick={() => api.startRadio({ kind: 'artist', name: artist }).then((n) => toast(`Radio: ${n} tracks`)).catch((e) => toast(String(e)))}>
+            Start radio
+          </button>
         </div>
       </div>
+      {info?.bio && (
+        <div className="artist-bio">
+          {info.image && <img src={info.image} alt="" />}
+          <div>
+            <p className={more ? '' : 'clamp'}>{info.bio}</p>
+            <div className="small">
+              <button className="link-btn" onClick={() => setMore((m) => !m)}>{more ? 'Show less' : 'Read more'}</button>
+              {info.url && (
+                <>
+                  {' · '}
+                  <button className="link-btn" onClick={() => inTauri && openUrl(info.url!)}>Wikipedia</button>
+                </>
+              )}
+              <span className="muted"> · from Wikipedia (CC BY-SA)</span>
+            </div>
+          </div>
+        </div>
+      )}
       <AlbumGrid
         albums={albumGrid(albums)}
         onOpen={(k) => go({ name: 'album', id: Number(k) })}
@@ -298,5 +330,21 @@ export function SearchPage({ query }: { query: string }) {
         </>
       )}
     </div>
+  )
+}
+
+function SimilarAlbums({ id }: { id: number }) {
+  const { go, toast, libVersion } = useNav()
+  const [similar] = useLoad(() => api.similarAlbums(id), [id, libVersion])
+  if (!similar?.length) return null
+  return (
+    <>
+      <h2>Similar albums in your library</h2>
+      <AlbumGrid
+        albums={albumGrid(similar)}
+        onOpen={(k) => go({ name: 'album', id: Number(k) })}
+        onPlay={(k) => api.playAlbum(Number(k)).catch((e) => toast(String(e)))}
+      />
+    </>
   )
 }

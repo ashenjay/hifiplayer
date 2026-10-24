@@ -310,7 +310,52 @@ export interface TagEdit {
   discNo?: string
 }
 
+export interface OnlineSettings {
+  lookupInfo: boolean
+  discord: boolean
+  discordAppId: string
+  dlnaRenderer: boolean
+  dlnaServer: boolean
+  dlnaName: string
+  dlnaPort: number
+}
+
+export interface DlnaStatus {
+  renderer: boolean
+  server: boolean
+  name: string
+  address?: string | null
+  error?: string | null
+}
+
+export interface ArtistInfo {
+  name: string
+  mbid?: string | null
+  kind?: string | null
+  country?: string | null
+  active?: string | null
+  disambiguation?: string | null
+  bio?: string | null
+  image?: string | null
+  url?: string | null
+}
+
+export interface ScrobbleStatus {
+  listenbrainzUser?: string | null
+  lastfmUser?: string | null
+  lastfmHasKey: boolean
+  pending: number
+}
+
+export interface OnThisDay {
+  played: [number, Album][]
+  anniversaries: [number, Album][]
+}
+
+export type RadioSeed = { kind: 'track'; id: number } | { kind: 'album'; id: number } | { kind: 'artist'; name: string }
+
 export interface Settings {
+  online?: OnlineSettings
   appearance?: Appearance
   devices: Record<string, DeviceProfile>
   fallback?: PlayOptions | null
@@ -442,6 +487,19 @@ export const api = {
   coverColors: (path: string) => invoke<string[]>('cover_colors', { path }),
   openMiniPlayer: () => invoke<void>('open_mini_player'),
   showMainWindow: () => invoke<void>('show_main_window'),
+  similarAlbums: (id: number) => invoke<Album[]>('similar_albums', { id }),
+  startRadio: (seed: RadioSeed) => invoke<number>('start_radio', { seed }),
+  onThisDay: () => invoke<OnThisDay>('on_this_day'),
+  setOnline: (online: OnlineSettings) => invoke<DlnaStatus>('set_online', { online }),
+  dlnaStatus: () => invoke<DlnaStatus>('dlna_status'),
+  artistInfo: (name: string) => invoke<ArtistInfo | null>('artist_info', { name }),
+  fetchMissingArt: () => invoke<number>('fetch_missing_art'),
+  scrobbleStatus: () => invoke<ScrobbleStatus>('scrobble_status'),
+  listenbrainzConnect: (token: string) => invoke<string>('listenbrainz_connect', { token }),
+  lastfmSetKeys: (apiKey: string, apiSecret: string) => invoke<void>('lastfm_set_keys', { apiKey, apiSecret }),
+  lastfmStartLogin: () => invoke<[string, string]>('lastfm_start_login'),
+  lastfmFinishLogin: (token: string) => invoke<string | null>('lastfm_finish_login', { token }),
+  scrobbleDisconnect: (service: 'listenbrainz' | 'lastfm') => invoke<void>('scrobble_disconnect', { service }),
   setStreamQuality: (quality: StreamQuality) => invoke<void>('set_stream_quality', { quality }),
   setDesktop: (desktop: DesktopSettings) => invoke<void>('set_desktop', { desktop }),
 

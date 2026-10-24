@@ -10,6 +10,8 @@ mod migrate;
 mod scan;
 mod search;
 pub mod tags;
+pub mod discover;
+mod online;
 
 pub use extras::{AlbumExtra, HistoryEntry, ListeningStats, Playlist};
 pub use search::{Facets, HealthReport, SmartSearch};
@@ -694,24 +696,30 @@ impl Library {
 
     /// Find cover art for albums that have none: embedded picture first, then an image in the folder.
     fn update_artwork(&self) -> Result<()> {
-        let todo: Vec<(i64, String, String)> = {
+        let todo: Vec<(i64, String, String, String, String)> = {
             let mut st = self.conn.prepare(
-                "SELECT a.id, MIN(t.path), MIN(t.folder) FROM albums a JOIN tracks t ON t.album_id = a.id
+                "SELECT a.id, MIN(t.path), MIN(t.folder), a.artist, a.title FROM albums a JOIN tracks t ON t.album_id = a.id
                  WHERE a.art_path IS NULL OR a.art_path = '' GROUP BY a.id",
             )?;
-            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
+                .collect::<rusqlite::Result<_>>()?
         };
         let art_dir = &self.art_dir;
         let found: Vec<(i64, Option<String>)> = todo
             .par_iter()
-            .map(|(id, track, folder)| {
+            .map(|(id, track, folder, artist, title)| {
                 let art = scan::embedded_picture(Path::new(track))
                     .and_then(|bytes| {
                         let ext = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) { "png" } else { "jpg" };
                         let dest = art_dir.join(format!("{id}.{ext}"));
                         std::fs::write(&dest, bytes).ok().map(|_| clean_path(&dest))
                     })
-                    .or_else(|| scan::folder_image(Path::new(folder)).map(|p| clean_path(&p)));
+                    .or_else(|| scan::folder_image(Path::new(folder)).map(|p| clean_path(&p)))
+                    // A cover downloaded earlier (album ids can change on rescans).
+                    .or_else(|| {
+                        let p = online::online_art_file(art_dir, artist, title);
+                        p.exists().then(|| clean_path(&p))
+                    });
                 (*id, art)
             })
             .collect();

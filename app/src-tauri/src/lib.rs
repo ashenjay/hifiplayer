@@ -12,7 +12,10 @@ use hifiplayer::library::{
 use hifiplayer::output::{self, DeviceInfo};
 use hifiplayer::player::{Command, Player, PlayerState, QueueItem, Repeat, SleepTimer, Status};
 use hifiplayer::library::tags::{Lyrics, TagEdit};
-use hifiplayer::settings::{Appearance, DesktopSettings, Settings, StreamQuality};
+use hifiplayer::library::discover::{OnThisDay, RadioSeed};
+use hifiplayer::online::musicbrainz::ArtistInfo;
+use hifiplayer::online::scrobble::{self, ScrobbleStatus};
+use hifiplayer::settings::{Appearance, DesktopSettings, OnlineSettings, Settings, StreamQuality};
 use hifiplayer::source::Media;
 use hifiplayer::source::set_stream_resolver;
 use hifiplayer::spotify::{self, SpotifyStatus};
@@ -23,6 +26,8 @@ use tauri::{Emitter, Manager, State};
 
 mod background;
 mod desktop;
+mod dlna;
+mod presence;
 mod remote;
 mod taskbar;
 
@@ -32,6 +37,7 @@ struct AppState {
     services: Arc<Services>,
     settings: Mutex<Settings>,
     remote: remote::Remote,
+    dlna: dlna::Dlna,
 }
 
 type Res<T> = Result<T, String>;
@@ -357,6 +363,114 @@ fn show_main_window(app: tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("mini") {
         let _ = w.close();
     }
+}
+
+// ---- Discovery: similar albums, radio, on this day ------------------------------------
+
+#[tauri::command]
+async fn similar_albums(state: State<'_, AppState>, id: i64) -> Res<Vec<Album>> {
+    state.library.lock().unwrap().similar_albums(id, 12).map_err(anyhow_err)
+}
+
+/// Fill the queue with a mix around a track, album or artist and play it.
+#[tauri::command]
+async fn start_radio(state: State<'_, AppState>, seed: RadioSeed) -> Res<usize> {
+    let items = state.library.lock().unwrap().radio(&seed, 60).map_err(anyhow_err)?;
+    if items.is_empty() {
+        return Err("Not enough music in the library for a radio mix yet.".into());
+    }
+    let n = items.len();
+    state.player.send(Command::PlayQueue { items, start: 0 });
+    Ok(n)
+}
+
+#[tauri::command]
+async fn on_this_day(state: State<'_, AppState>) -> Res<OnThisDay> {
+    state.library.lock().unwrap().on_this_day().map_err(anyhow_err)
+}
+
+// ---- Online: artwork, artist info, scrobbling, Discord, DLNA ----------------------------
+
+#[tauri::command]
+fn set_online(state: State<'_, AppState>, online: OnlineSettings) -> Res<dlna::DlnaStatus> {
+    let mut s = state.settings.lock().unwrap();
+    let dlna_changed = s.online.dlna_renderer != online.dlna_renderer
+        || s.online.dlna_server != online.dlna_server
+        || s.online.dlna_name != online.dlna_name
+        || s.online.dlna_port != online.dlna_port;
+    s.online = online.clone();
+    s.save().map_err(anyhow_err)?;
+    drop(s);
+    if dlna_changed {
+        state.dlna.apply(&online);
+    }
+    Ok(state.dlna.status())
+}
+
+#[tauri::command]
+fn dlna_status(state: State<'_, AppState>) -> dlna::DlnaStatus {
+    state.dlna.status()
+}
+
+/// Artist biography: from the cache, or looked up online when allowed.
+#[tauri::command]
+async fn artist_info(state: State<'_, AppState>, name: String) -> Res<Option<ArtistInfo>> {
+    if let Some(cached) = state.library.lock().unwrap().cached_artist_info(&name).map_err(anyhow_err)? {
+        return Ok(cached);
+    }
+    if !state.settings.lock().unwrap().online.lookup_info {
+        return Ok(None);
+    }
+    blocking(move || {
+        let info = hifiplayer::online::musicbrainz::artist_info(&name).map_err(anyhow_err)?;
+        let lib = Library::open_default().map_err(anyhow_err)?;
+        lib.save_artist_info(&name, info.as_ref()).map_err(anyhow_err)?;
+        Ok(info)
+    })
+    .await
+}
+
+/// Look up covers for albums without one ("art-progress" events). Returns how many were found.
+#[tauri::command]
+async fn fetch_missing_art(app: tauri::AppHandle) -> Res<usize> {
+    blocking(move || background::fetch_missing_art(&app).ok_or_else(|| "A cover search is already running.".to_string()))
+        .await
+}
+
+#[tauri::command]
+fn scrobble_status() -> ScrobbleStatus {
+    scrobble::status(Library::open_default().ok().as_ref())
+}
+
+#[tauri::command]
+async fn listenbrainz_connect(token: String) -> Res<String> {
+    blocking(move || scrobble::listenbrainz_connect(&token).map_err(anyhow_err)).await
+}
+
+#[tauri::command]
+async fn lastfm_set_keys(api_key: String, api_secret: String) -> Res<()> {
+    blocking(move || scrobble::lastfm_set_keys(&api_key, &api_secret).map_err(anyhow_err)).await
+}
+
+/// Returns (page to open in the browser, token to finish with).
+#[tauri::command]
+async fn lastfm_start_login() -> Res<(String, String)> {
+    blocking(|| scrobble::lastfm_start_login().map_err(anyhow_err)).await
+}
+
+#[tauri::command]
+async fn lastfm_finish_login(token: String) -> Res<Option<String>> {
+    blocking(move || scrobble::lastfm_finish_login(&token).map_err(anyhow_err)).await
+}
+
+#[tauri::command]
+async fn scrobble_disconnect(service: String) -> Res<()> {
+    blocking(move || match service.as_str() {
+        "listenbrainz" => scrobble::listenbrainz_disconnect().map_err(anyhow_err),
+        "lastfm" => scrobble::lastfm_disconnect().map_err(anyhow_err),
+        _ => Err("unknown service".into()),
+    })
+    .await
 }
 
 // ---- Favourites, ratings, history ------------------------------------------------
@@ -835,6 +949,8 @@ pub fn run() {
     spotify::init(move |ev| p.send(Command::Spotify(ev)));
     let remote = remote::Remote::new(player.clone());
     remote.apply(&settings.remote);
+    let dlna = dlna::Dlna::new(player.clone());
+    dlna.apply(&settings.online);
     // Persist the generated PIN so it stays the same across restarts.
     let _ = settings.save();
 
@@ -855,7 +971,7 @@ pub fn run() {
                 .with_handler(move |_app, shortcut, event| desktop::on_hotkey(&hotkey_player, shortcut, event.state()))
                 .build(),
         )
-        .manage(AppState { player, library: Mutex::new(library), services, settings: Mutex::new(settings), remote })
+        .manage(AppState { player, library: Mutex::new(library), services, settings: Mutex::new(settings), remote, dlna })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let to_tray = window.app_handle().state::<AppState>().settings.lock().unwrap().desktop.close_to_tray;
@@ -876,6 +992,8 @@ pub fn run() {
             background::start_history(app.handle(), player);
             background::watch_library(app.handle());
             background::start_periodic_scan(app.handle());
+            background::start_online_jobs(app.handle());
+            presence::start(app.handle());
             desktop::set_global_hotkeys(app.handle(), desktop_settings.global_hotkeys);
             if std::env::args().any(|a| a == "--minimized")
                 && let Some(w) = app.get_webview_window("main")
@@ -972,6 +1090,19 @@ pub fn run() {
             cover_colors,
             open_mini_player,
             show_main_window,
+            similar_albums,
+            start_radio,
+            on_this_day,
+            set_online,
+            dlna_status,
+            artist_info,
+            fetch_missing_art,
+            scrobble_status,
+            listenbrainz_connect,
+            lastfm_set_keys,
+            lastfm_start_login,
+            lastfm_finish_login,
+            scrobble_disconnect,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app")

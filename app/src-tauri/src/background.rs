@@ -117,12 +117,100 @@ pub fn start_history(app: &AppHandle, player: Player) {
                 heard += dt;
             }
             let need = item.duration.map(|d| (d / 2.0).min(240.0)).unwrap_or(240.0).max(20.0);
+            if heard > 0.0 && heard <= dt + 0.01 {
+                // Just started: tell the scrobbling services.
+                if let Some(s) = scrobble_of(&item, st.duration) {
+                    std::thread::spawn(move || hifiplayer::online::scrobble::now_playing(&s));
+                }
+            }
             if !recorded && heard >= need {
                 recorded = true;
                 if lib.record_play(&item, heard).is_ok() {
                     let _ = handle.emit("history-changed", ());
                 }
+                if let Some(mut s) = scrobble_of(&item, st.duration) {
+                    s.started_at -= heard as i64;
+                    std::thread::spawn(move || {
+                        if let Ok(lib) = Library::open_default() {
+                            hifiplayer::online::scrobble::scrobble(&lib, &s);
+                        }
+                    });
+                }
             }
+        }
+    });
+}
+
+/// What to scrobble for a queue item; Last.fm ignores tracks under 30 s and needs an artist.
+fn scrobble_of(item: &hifiplayer::player::QueueItem, duration: Option<f64>) -> Option<hifiplayer::online::scrobble::Scrobble> {
+    if !hifiplayer::online::scrobble::enabled() {
+        return None;
+    }
+    let duration = duration.or(item.duration);
+    if duration.is_some_and(|d| d < 30.0) {
+        return None;
+    }
+    Some(hifiplayer::online::scrobble::Scrobble {
+        artist: item.artist.clone()?,
+        title: item.title.clone(),
+        album: item.album.clone(),
+        duration,
+        started_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0),
+    })
+}
+
+static FETCHING_ART: AtomicBool = AtomicBool::new(false);
+
+/// Download covers for albums that have none. None if a search is already running.
+pub fn fetch_missing_art(app: &AppHandle) -> Option<usize> {
+    if FETCHING_ART.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    let mut found = 0;
+    if let Ok(lib) = Library::open_default() {
+        let todo = lib.albums_missing_art().unwrap_or_default();
+        let total = todo.len();
+        for (i, (id, artist, title)) in todo.into_iter().enumerate() {
+            let _ = app.emit("art-progress", serde_json::json!({ "done": i, "total": total, "current": title }));
+            match hifiplayer::online::musicbrainz::find_cover(&artist, &title) {
+                Ok(Some(bytes)) => {
+                    if lib.set_online_art(id, &artist, &title, &bytes).is_ok() {
+                        found += 1;
+                    }
+                }
+                Ok(None) => {
+                    let _ = lib.mark_no_online_art(&artist, &title);
+                }
+                // Offline or MusicBrainz busy: try again another time.
+                Err(_) => break,
+            }
+        }
+        let _ = app.emit("art-progress", serde_json::json!({ "done": total, "total": total, "current": "" }));
+        if found > 0 {
+            let _ = app.emit("library-changed", ());
+        }
+    }
+    FETCHING_ART.store(false, Ordering::Release);
+    Some(found)
+}
+
+/// Covers for new albums (when allowed) and retrying queued scrobbles.
+pub fn start_online_jobs(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(60));
+        loop {
+            let lookup = {
+                use tauri::Manager;
+                handle.state::<crate::AppState>().settings.lock().unwrap().online.lookup_info
+            };
+            if lookup {
+                fetch_missing_art(&handle);
+            }
+            if let Ok(lib) = Library::open_default() {
+                hifiplayer::online::scrobble::flush(&lib);
+            }
+            std::thread::sleep(Duration::from_secs(15 * 60));
         }
     });
 }

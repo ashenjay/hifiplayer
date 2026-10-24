@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#121214" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<link rel="manifest" href="/manifest.json" />
+<link rel="icon" href="/icon.svg" />
+<link rel="apple-touch-icon" href="/icon.svg" />
 <title>HiFi Player Remote</title>
 <style>
   :root { --bg:#121214; --panel:#1c1c21; --line:#2c2c34; --text:#ececf1; --muted:#9a9aa6; --accent:#8b5cf6; --accent2:#a78bfa; }
@@ -26,9 +30,11 @@
   .art { width: 100%; aspect-ratio: 1; border-radius: 12px; background: var(--panel) center/cover no-repeat; box-shadow: 0 18px 40px #000a; max-width: 420px; margin: 0 auto; display: block; }
   .title { font-size: 21px; font-weight: 650; margin: 16px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .artist { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 10px; background: #2a2340; color: #d8b4fe; margin-top: 8px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 10px; background: #2a2340; color: #d8b4fe; margin-top: 8px; border: none; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #a855f7; }
   .dot.high { background: #22c55e; } .dot.low { background: #eab308; }
+  .path { margin-top: 8px; font-size: 12px; color: var(--muted); background: var(--panel); border-radius: 10px; padding: 10px 12px; line-height: 1.5; }
+  .path b { color: var(--text); font-weight: 600; }
   .seek { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .seek input { flex: 1; padding: 0; height: 4px; appearance: none; -webkit-appearance: none; border: none; background: #3a3a44; border-radius: 2px; }
   .seek input::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
@@ -37,6 +43,12 @@
   .controls .play { width: 68px; height: 68px; border-radius: 50%; background: var(--text); color: #111; display: flex; align-items: center; justify-content: center; }
   .controls .play svg { width: 34px; height: 34px; }
   .controls svg { width: 34px; height: 34px; }
+  .extras { display: flex; justify-content: center; gap: 10px; margin-top: 4px; }
+  .extras button { background: none; border: 1px solid transparent; color: var(--muted); padding: 6px 10px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+  .extras button svg { width: 20px; height: 20px; }
+  .extras button.on { color: var(--accent2); border-color: var(--line); }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; padding: 14px 18px calc(18px + env(safe-area-inset-bottom)); z-index: 20; display: flex; flex-direction: column; gap: 8px; }
+  .sheet button { text-align: left; background: var(--bg); }
 
   .tabs { display: flex; gap: 6px; padding: 8px 18px; position: sticky; top: 0; background: var(--bg); z-index: 5; border-bottom: 1px solid var(--line); }
   .tabs button { flex: 1; border: none; background: none; color: var(--muted); font-weight: 600; }
@@ -51,12 +63,17 @@
   .row .n { width: 26px; text-align: center; color: var(--muted); font-size: 13px; }
   .row .rt { flex: 1; min-width: 0; } .row .rt div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row .d { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .row .x { background: none; border: none; color: var(--muted); padding: 4px 8px; font-size: 18px; }
   .back { background: none; border: none; padding: 4px 0; color: var(--accent2); }
   .hero { display: flex; gap: 14px; align-items: flex-end; margin: 10px 0 14px; }
   .hero .cv { width: 110px; height: 110px; flex: none; border-radius: 8px; background: var(--panel) center/cover no-repeat; }
   .hero h2 { margin: 0 0 4px; font-size: 19px; }
-  .primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; margin-top: 8px; }
-  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #2a2a33; border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; max-width: 90vw; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+  .btns button { padding: 8px 12px; font-size: 14px; }
+  .primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  h3 { font-size: 15px; margin: 18px 0 6px; }
+  .pill { display: inline-block; padding: 6px 12px; margin: 0 6px 6px 0; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #2a2a33; border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; max-width: 90vw; z-index: 30; }
 </style>
 </head>
 <body>
@@ -75,34 +92,45 @@
     <div class="art" id="art"></div>
     <div class="title" id="title">Nothing playing</div>
     <div class="artist" id="artist"></div>
-    <div id="badge" class="badge hidden"><span class="dot" id="dot"></span><span id="quality"></span></div>
+    <button id="badge" class="badge hidden"><span class="dot" id="dot"></span><span id="quality"></span></button>
+    <div id="path" class="path hidden"></div>
     <div class="seek"><span id="pos">0:00</span><input type="range" id="seek" min="0" max="1" step="0.1" value="0" /><span id="dur">0:00</span></div>
     <div class="controls">
       <button id="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M18 6l-8.5 6 8.5 6zM6 6h2v12H6z"/></svg></button>
       <button id="play" class="play" aria-label="Play or pause"></button>
       <button id="next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M6 6l8.5 6L6 18zM16 6h2v12h-2z"/></svg></button>
     </div>
+    <div class="extras">
+      <button id="shuffle" aria-label="Shuffle"><svg viewBox="0 0 24 24"><path d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4zm.3 9.4l-1.4 1.4 3.1 3.1L14.5 20H20v-5.5l-2 2z"/></svg></button>
+      <button id="repeat" aria-label="Repeat"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2z"/></svg><span id="repeatLabel"></span></button>
+      <button id="sleep" aria-label="Sleep timer"><svg viewBox="0 0 24 24"><path d="M12.3 2a10 10 0 1 0 9.7 12.6A8 8 0 0 1 12.3 2z"/></svg><span id="sleepLabel"></span></button>
+      <button id="radio" aria-label="Radio from this track"><svg viewBox="0 0 24 24"><path d="M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-5.7-3.7L4.9 4.9A10 10 0 0 0 4.9 19l1.4-1.4a8 8 0 0 1 0-11.3zm11.4 0a8 8 0 0 1 0 11.3l1.4 1.4a10 10 0 0 0 0-14.1zM8.5 8.5 7.1 7.1a7 7 0 0 0 0 9.8l1.4-1.4a5 5 0 0 1 0-7zm7 0a5 5 0 0 1 0 7l1.4 1.4a7 7 0 0 0 0-9.8z"/></svg></button>
+    </div>
   </section>
 
   <nav class="tabs">
-    <button data-tab="albums" class="on">Albums</button>
+    <button data-tab="albums" class="on">Library</button>
+    <button data-tab="playlists">Playlists</button>
     <button data-tab="queue">Queue</button>
   </nav>
   <section class="pane" id="albums">
-    <input id="q" placeholder="Search albums" />
+    <input id="q" placeholder="Search albums, artists, tracks" />
+    <div id="results"></div>
     <div class="grid" id="grid"></div>
   </section>
   <section class="pane hidden" id="album"></section>
+  <section class="pane hidden" id="playlists"></section>
   <section class="pane hidden" id="queue"></section>
 </div>
 
+<div id="sheet" class="sheet hidden"></div>
 <div id="toast" class="hidden"></div>
 
 <script>
 const PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
 const PAUSE = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
 let pin = localStorage.getItem('hifi-pin') || '';
-let state = null, dragging = false, tab = 'albums';
+let state = null, dragging = false, tab = 'albums', showPath = false;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const clock = (s) => { if (s == null || !isFinite(s)) return '0:00'; s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = String(s%60).padStart(2,'0'); return h ? `${h}:${String(m).padStart(2,'0')}:${x}` : `${m}:${x}`; };
@@ -116,7 +144,7 @@ async function api(path, body) {
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
-const cmd = (c) => api('/api/cmd', c).catch((e) => toast(e.message));
+const cmd = (c, done) => api('/api/cmd', c).then(() => { if (done) toast(done); poll(); }).catch((e) => toast(e.message));
 
 function showLogin(err) { $('app').classList.add('hidden'); $('login').classList.remove('hidden'); $('loginErr').textContent = err || ''; }
 async function login() {
@@ -142,6 +170,16 @@ function render(s) {
   if (!dragging) { $('seek').max = dur || 1; $('seek').value = Math.min(s.position, dur || 1); $('pos').textContent = clock(s.position); }
   $('dur').textContent = clock(dur);
   if (it && it.quality) { $('badge').classList.remove('hidden'); $('quality').textContent = it.quality; $('dot').className = 'dot ' + level(s.signalPath); } else $('badge').classList.add('hidden');
+  const p = s.signalPath;
+  $('path').classList.toggle('hidden', !(showPath && p));
+  if (p) $('path').innerHTML = `<b>${p.bit_perfect ? 'Bit-perfect' : 'Converted'}</b><br>Source: ${esc(p.source)}<br>Processing: ${esc(p.processing)}<br>Output: ${esc(p.output)}`;
+  $('shuffle').classList.toggle('on', !!s.shuffle);
+  $('repeat').classList.toggle('on', s.repeat !== 'off');
+  $('repeatLabel').textContent = s.repeat === 'one' ? '1' : '';
+  $('sleep').classList.toggle('on', !!s.sleep);
+  $('sleepLabel').textContent = s.sleep ? (s.sleep.endOfTrack ? 'end' : clock(s.sleep.remaining)) : '';
+  const live = !!s.live;
+  ['shuffle', 'repeat', 'radio'].forEach((id) => ($(id).disabled = live));
   if (tab === 'queue') renderQueue();
 }
 
@@ -149,23 +187,50 @@ function renderQueue() {
   const s = state; if (!s) return;
   if (s.live) { $('queue').innerHTML = '<div class="muted">Spotify is playing. Use the Spotify app for its queue.</div>'; return; }
   if (!s.queue.length) { $('queue').innerHTML = '<div class="muted">The queue is empty.</div>'; return; }
-  $('queue').innerHTML = s.queue.map((q, i) => `<div class="row ${i === s.index ? 'cur' : ''}" data-i="${i}"><span class="n">${i === s.index ? '♪' : i + 1}</span><div class="rt"><div>${esc(q.title)}</div><div class="muted small">${esc(q.artist || '')}</div></div><span class="d">${clock(q.duration)}</span></div>`).join('');
+  const left = s.queue.slice((s.index ?? -1) + 1).reduce((a, q) => a + (q.duration || 0), 0);
+  $('queue').innerHTML = `<div class="btns"><span class="muted small" style="flex:1;align-self:center">${s.queue.length} tracks · ${clock(left)} left</span><button id="clear">Clear</button></div>` +
+    s.queue.map((q, i) => `<div class="row ${i === s.index ? 'cur' : ''}" data-i="${i}"><span class="n">${i === s.index ? '♪' : i + 1}</span><div class="rt"><div>${esc(q.title)}</div><div class="muted small">${esc(q.artist || '')}</div></div><span class="d">${clock(q.duration)}</span><button class="x" data-rm="${i}" aria-label="Remove">×</button></div>`).join('');
+  $('clear').onclick = () => cmd({ type: 'clearQueue' });
 }
-$('queue').onclick = (e) => { const r = e.target.closest('.row'); if (r) cmd({ type: 'jump', index: Number(r.dataset.i) }); };
+$('queue').onclick = (e) => {
+  const rm = e.target.closest('[data-rm]');
+  if (rm) return cmd({ type: 'remove', index: Number(rm.dataset.rm) });
+  const r = e.target.closest('.row'); if (r) cmd({ type: 'jump', index: Number(r.dataset.i) });
+};
 
 $('play').onclick = () => cmd({ type: 'togglePause' });
 $('prev').onclick = () => cmd({ type: 'previous' });
 $('next').onclick = () => cmd({ type: 'next' });
 $('seek').oninput = () => { dragging = true; $('pos').textContent = clock(Number($('seek').value)); };
 $('seek').onchange = () => { cmd({ type: 'seek', secs: Number($('seek').value) }); setTimeout(() => (dragging = false), 1200); };
+$('badge').onclick = () => { showPath = !showPath; if (state) render(state); };
+$('shuffle').onclick = () => state && cmd({ type: 'setShuffle', on: !state.shuffle });
+$('repeat').onclick = () => state && cmd({ type: 'setRepeat', mode: { off: 'all', all: 'one', one: 'off' }[state.repeat] });
+$('radio').onclick = () => {
+  const it = state && current(state);
+  if (!it || !it.artist) return toast('Play something from your library first.');
+  cmd({ type: 'radio', seed: { kind: 'artist', name: it.artist } }, 'Radio started');
+};
+
+function sheet(title, options) {
+  const el = $('sheet');
+  el.innerHTML = `<div class="muted small">${esc(title)}</div>` + options.map((o, i) => `<button data-o="${i}">${esc(o[0])}</button>`).join('') + '<button data-o="x">Cancel</button>';
+  el.classList.remove('hidden');
+  el.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; el.classList.add('hidden'); if (b.dataset.o !== 'x') options[Number(b.dataset.o)][1](); };
+}
+$('sleep').onclick = () => sheet('Sleep timer', [
+  ['Stop after this track', () => cmd({ type: 'setSleep', timer: { kind: 'endOfTrack' } })],
+  ...[15, 30, 45, 60, 90].map((m) => [`Pause in ${m} minutes`, () => cmd({ type: 'setSleep', timer: { kind: 'minutes', minutes: m } })]),
+  ['Turn off', () => cmd({ type: 'setSleep', timer: null })],
+]);
 
 function showTab(t) {
   tab = t;
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
-  $('albums').classList.toggle('hidden', t !== 'albums');
+  ['albums', 'playlists', 'queue'].forEach((id) => $(id).classList.toggle('hidden', t !== id));
   $('album').classList.add('hidden');
-  $('queue').classList.toggle('hidden', t !== 'queue');
   if (t === 'queue') renderQueue();
+  if (t === 'playlists') loadPlaylists();
 }
 document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 
@@ -173,34 +238,73 @@ document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => show
 function cover(id) {
   return `style="background-image:url('/api/cover/album/${id}?pin=${encodeURIComponent(pin)}'), linear-gradient(135deg,#4c2d82,#2a1640)"`;
 }
-async function loadAlbums(q) {
+const albumCards = (albums) => albums.length ? albums.map((a) => `<div class="card" data-id="${a.id}"><div class="cv" ${cover(a.id)}></div><div class="t">${esc(a.title)}</div><div class="a">${esc(a.artist)}</div></div>`).join('') : '<div class="muted">No albums.</div>';
+
+async function loadAlbums() {
+  try { $('results').innerHTML = ''; $('grid').innerHTML = albumCards(await api('/api/albums')); } catch (e) { toast(e.message); }
+}
+async function search(q) {
+  if (!q) return loadAlbums();
   try {
-    const albums = await api('/api/albums' + (q ? '?q=' + encodeURIComponent(q) : ''));
-    $('grid').innerHTML = albums.length ? albums.map((a) => `<div class="card" data-id="${a.id}"><div class="cv" ${cover(a.id)}></div><div class="t">${esc(a.title)}</div><div class="a">${esc(a.artist)}</div></div>`).join('') : '<div class="muted">No albums.</div>';
+    const r = await api('/api/search?q=' + encodeURIComponent(q));
+    let html = '';
+    if (r.artists.length) html += '<h3>Artists</h3>' + r.artists.slice(0, 12).map((a) => `<span class="pill" data-artist="${esc(a.name)}">${esc(a.name)}</span>`).join('');
+    if (r.tracks.length) html += '<h3>Tracks</h3>' + r.tracks.slice(0, 15).map((t) => `<div class="row" data-track="${t.id}"><div class="rt"><div>${esc(t.title)}</div><div class="muted small">${esc([t.artist, t.album].filter(Boolean).join(' — '))}</div></div><span class="d">${clock(t.duration)}</span></div>`).join('');
+    if (r.albums.length) html += '<h3>Albums</h3>';
+    $('results').innerHTML = html || '<div class="muted" style="margin-top:12px">Nothing found.</div>';
+    $('grid').innerHTML = r.albums.length ? albumCards(r.albums) : '';
   } catch (e) { toast(e.message); }
 }
-let searchTimer; $('q').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadAlbums($('q').value.trim()), 300); };
+let searchTimer; $('q').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => search($('q').value.trim()), 300); };
 $('grid').onclick = (e) => { const c = e.target.closest('.card'); if (c) openAlbum(Number(c.dataset.id)); };
+$('results').onclick = async (e) => {
+  const t = e.target.closest('[data-track]');
+  if (t) return cmd({ type: 'playTrack', id: Number(t.dataset.track) }, 'Playing');
+  const a = e.target.closest('[data-artist]');
+  if (a) {
+    const name = a.dataset.artist;
+    try {
+      const albums = await api('/api/artist?name=' + encodeURIComponent(name));
+      $('results').innerHTML = `<h3>${esc(name)}</h3><div class="btns"><button class="primary" id="artistRadio">Radio</button></div>`;
+      $('grid').innerHTML = albumCards(albums);
+      $('artistRadio').onclick = () => cmd({ type: 'radio', seed: { kind: 'artist', name } }, 'Radio started');
+    } catch (err) { toast(err.message); }
+  }
+};
 
 async function openAlbum(id) {
   try {
     const { album, tracks } = await api('/api/album/' + id);
     $('albums').classList.add('hidden');
     const el = $('album'); el.classList.remove('hidden');
-    el.innerHTML = `<button class="back" id="back">‹ Albums</button>
-      <div class="hero"><div class="cv" ${cover(album.id)}></div><div><h2>${esc(album.title)}</h2><div class="muted">${esc(album.artist)}${album.year ? ' · ' + album.year : ''}</div><div class="muted small">${esc(album.quality)}</div><button class="primary" id="playAll">▶ Play album</button></div></div>
+    el.innerHTML = `<button class="back" id="back">‹ Library</button>
+      <div class="hero"><div class="cv" ${cover(album.id)}></div><div><h2>${esc(album.title)}</h2><div class="muted">${esc(album.artist)}${album.year ? ' · ' + album.year : ''}</div><div class="muted small">${esc(album.quality)}</div></div></div>
+      <div class="btns"><button class="primary" id="playAll">▶ Play</button><button id="playNext">Play next</button><button id="addQueue">Add to queue</button><button id="albumRadio">Radio</button></div>
       ${tracks.map((t, i) => `<div class="row" data-i="${i}"><span class="n">${t.trackNo ?? i + 1}</span><div class="rt"><div>${esc(t.title)}</div></div><span class="d">${clock(t.duration)}</span></div>`).join('')}`;
     $('back').onclick = () => showTab('albums');
-    $('playAll').onclick = () => cmd({ type: 'playAlbum', id: album.id, start: 0 }).then(() => toast('Playing ' + album.title));
+    $('playAll').onclick = () => cmd({ type: 'playAlbum', id: album.id, start: 0 }, 'Playing ' + album.title);
+    $('playNext').onclick = () => cmd({ type: 'queueAlbum', id: album.id, mode: 'next' }, 'Playing next');
+    $('addQueue').onclick = () => cmd({ type: 'queueAlbum', id: album.id, mode: 'append' }, 'Added to queue');
+    $('albumRadio').onclick = () => cmd({ type: 'radio', seed: { kind: 'album', id: album.id } }, 'Radio started');
     el.onclick = (e) => { const r = e.target.closest('.row'); if (r) cmd({ type: 'playAlbum', id: album.id, start: Number(r.dataset.i) }); };
     window.scrollTo({ top: $('now').offsetHeight - 10, behavior: 'smooth' });
   } catch (e) { toast(e.message); }
 }
 
+async function loadPlaylists() {
+  try {
+    const lists = await api('/api/playlists');
+    $('playlists').innerHTML = lists.length
+      ? lists.map((p) => `<div class="row" data-pl="${p.id}"><div class="rt"><div>${esc(p.name)}</div><div class="muted small">${p.tracks} tracks · ${clock(p.duration)}</div></div><span class="d">▶</span></div>`).join('')
+      : '<div class="muted">No playlists yet. Make them in HiFi Player on your PC.</div>';
+  } catch (e) { toast(e.message); }
+}
+$('playlists').onclick = (e) => { const r = e.target.closest('[data-pl]'); if (r) cmd({ type: 'playPlaylist', id: Number(r.dataset.pl) }, 'Playing playlist'); };
+
 async function poll() { try { render(await api('/api/state')); } catch (_) {} }
 function start() {
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
-  poll(); loadAlbums('');
+  poll(); loadAlbums();
   clearInterval(start.t); start.t = setInterval(poll, 1000);
 }
 if (pin) { api('/api/state').then(start).catch(() => showLogin()); } else showLogin();

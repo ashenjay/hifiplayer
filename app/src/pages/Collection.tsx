@@ -58,6 +58,11 @@ export function HomePage() {
   const grid = useGridHandlers()
   const [stats, error] = useLoad(() => api.listening(), [libVersion])
   const [history] = useLoad(() => api.history(15), [libVersion])
+  const [today] = useLoad(() => api.onThisDay(), [libVersion])
+  const todayAlbums = [
+    ...(today?.played ?? []).map(([n, a]) => ({ ...albumGrid([a])[0], key: `p${a.id}`, artist: `Played ${n === 1 ? 'a year' : `${n} years`} ago · ${a.artist}`, year: null })),
+    ...(today?.anniversaries ?? []).map(([n, a]) => ({ ...albumGrid([a])[0], key: `a${a.id}`, artist: `${n} years old this year · ${a.artist}`, year: null })),
+  ]
   if (error) return <ErrorBox error={error} />
   if (!stats) return <Loading />
   return (
@@ -69,6 +74,16 @@ export function HomePage() {
         <div><b>{stats.playsLast30Days}</b> plays in the last 30 days</div>
       </div>
       {stats.recentlyAdded.length > 0 && (<><h2>Recently added</h2><AlbumGrid albums={albumGrid(stats.recentlyAdded)} {...grid} /></>)}
+      {todayAlbums.length > 0 && (
+        <>
+          <h2>On this day</h2>
+          <AlbumGrid
+            albums={todayAlbums}
+            onOpen={(k) => go({ name: 'album', id: Number(k.slice(1)) })}
+            onPlay={(k) => api.playAlbum(Number(k.slice(1)))}
+          />
+        </>
+      )}
       {stats.topAlbums.length > 0 && (<><h2>Most played albums</h2><AlbumGrid albums={albumGrid(stats.topAlbums.map(([a]) => a))} {...grid} /></>)}
       {stats.rediscover.length > 0 && (<><h2>Rediscover your favourites</h2><AlbumGrid albums={albumGrid(stats.rediscover)} {...grid} /></>)}
       {history && history.length > 0 && (

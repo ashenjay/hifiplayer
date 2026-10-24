@@ -32,6 +32,40 @@ pub struct Settings {
     /// Played on instead when the chosen device is unplugged or busy.
     pub fallback: Option<PlayOptions>,
     pub appearance: Appearance,
+    pub online: OnlineSettings,
+}
+
+/// Optional network features (accounts live in the encrypted secrets store).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OnlineSettings {
+    /// Fetch missing covers and artist biographies from MusicBrainz / Wikipedia.
+    pub lookup_info: bool,
+    pub discord: bool,
+    /// Application ID from discord.com/developers.
+    pub discord_app_id: String,
+    /// Other apps on the network can send music to HiFi Player.
+    pub dlna_renderer: bool,
+    /// Other devices on the network can browse and play the library.
+    pub dlna_server: bool,
+    /// Name shown on the network.
+    pub dlna_name: String,
+    pub dlna_port: u16,
+}
+
+impl Default for OnlineSettings {
+    fn default() -> Self {
+        let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PC".into());
+        Self {
+            lookup_info: true,
+            discord: false,
+            discord_app_id: String::new(),
+            dlna_renderer: false,
+            dlna_server: false,
+            dlna_name: format!("HiFi Player ({host})"),
+            dlna_port: 8897,
+        }
+    }
 }
 
 /// Look of the app (it never affects the sound).

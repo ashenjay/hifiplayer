@@ -25,6 +25,9 @@ tauri-plugin-global-shortcut = "2.4.1"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2.5.4"
 tiny_http = "0.12.0"
+md5 = "0.8"
+socket2 = { version = "0.6", features = ["all"] }
+ureq = "3.5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
 windows = { version = "0.61", features = [
     "Win32_Foundation",

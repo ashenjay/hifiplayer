@@ -408,3 +408,14 @@ kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-w
 .whats-new { max-width: 600px; max-height: 86vh; overflow-y: auto; }
 .whats-new ul { margin: 0 0 6px; padding-left: 20px; line-height: 1.55; }
 .whats-new h3 { margin: 6px 0 4px; }
+
+/* Batch 6 */
+.artist-bio { display: flex; gap: 18px; align-items: flex-start; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin: 4px 0 20px; max-width: 900px; }
+.artist-bio img { width: 120px; height: 120px; object-fit: cover; border-radius: 8px; flex: none; }
+.artist-bio p { margin: 0 0 8px; line-height: 1.55; }
+.artist-bio p.clamp { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.account-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.account-row > b { min-width: 120px; }
+.account-row input { max-width: 320px; }
+.status-ok { color: var(--high); }
+.card h3.sub { margin: 20px 0 4px; }

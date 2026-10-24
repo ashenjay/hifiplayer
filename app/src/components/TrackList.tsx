@@ -122,6 +122,16 @@ export function TrackList({
                 {r.trackId != null && (
                   <button
                     onClick={() => {
+                      api.startRadio({ kind: 'track', id: r.trackId! }).then((n) => toast(`Radio: ${n} tracks`)).catch((e) => toast(String(e)))
+                      setMenu(null)
+                    }}
+                  >
+                    Start radio
+                  </button>
+                )}
+                {r.trackId != null && (
+                  <button
+                    onClick={() => {
                       window.dispatchEvent(new CustomEvent('edit-tags', { detail: { ids: [r.trackId] } }))
                       setMenu(null)
                     }}

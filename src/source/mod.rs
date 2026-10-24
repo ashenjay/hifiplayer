@@ -25,6 +25,12 @@ pub enum Media {
         end: Option<f64>,
     },
     Stream { service: String, id: String },
+    /// Any HTTP URL (pushed by a DLNA / UPnP controller). `mime` helps pick the decoder.
+    Url {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime: Option<String>,
+    },
     /// Live audio from the Spotify Connect receiver.
     Spotify,
 }
@@ -135,6 +141,15 @@ impl Source {
                 Ok(Source::Pcm(src))
             }
             Media::Spotify => Ok(Source::Live(crate::spotify::LiveSource::open()?)),
+            Media::Url { url, mime } => {
+                let ext = url_ext(url, mime.as_deref());
+                if ext == "dsf" || ext == "dff" {
+                    // DSD readers need a file: fetch it first (a LAN copy is quick).
+                    return Self::open(&download_temp(url, &ext)?);
+                }
+                let http = http::HttpSource::new(vec![url.clone()])?;
+                Ok(Source::Pcm(pcm::PcmSource::from_source(Box::new(http), &ext)?))
+            }
         }
     }
 
@@ -176,4 +191,37 @@ impl Source {
             Source::Live(_) => None,
         }
     }
+}
+
+/// File extension for a URL, from its MIME type or path.
+fn url_ext(url: &str, mime: Option<&str>) -> String {
+    let from_mime = mime.map(|m| m.to_ascii_lowercase()).and_then(|m| {
+        Some(match m.split(';').next()?.trim() {
+            "audio/flac" | "audio/x-flac" => "flac",
+            "audio/wav" | "audio/x-wav" | "audio/wave" | "audio/l16" | "audio/l24" => "wav",
+            "audio/mpeg" | "audio/mp3" => "mp3",
+            "audio/mp4" | "audio/x-m4a" | "audio/aac" => "m4a",
+            "audio/aiff" | "audio/x-aiff" => "aiff",
+            "audio/ogg" | "audio/x-ogg" => "ogg",
+            "audio/dsf" | "audio/x-dsf" => "dsf",
+            "audio/dff" | "audio/x-dff" => "dff",
+            _ => return None,
+        })
+    });
+    if let Some(e) = from_mime {
+        return e.into();
+    }
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    path.rsplit('/').next().and_then(|f| f.rsplit_once('.')).map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
+}
+
+fn download_temp(url: &str, ext: &str) -> Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!("hifiplayer-upnp.{ext}"));
+    let mut resp = crate::streaming::agent().get(url).call().map_err(|e| anyhow!("download failed: {e}"))?;
+    if resp.status().as_u16() >= 400 {
+        return Err(anyhow!("download failed: HTTP {}", resp.status()));
+    }
+    let mut file = std::fs::File::create(&path)?;
+    std::io::copy(&mut resp.body_mut().as_reader(), &mut file)?;
+    Ok(path)
 }

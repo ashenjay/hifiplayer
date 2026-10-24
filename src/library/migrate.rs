@@ -4,7 +4,7 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-pub const VERSION: i64 = 4;
+pub const VERSION: i64 = 5;
 
 pub fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -73,6 +73,23 @@ pub fn migrate(conn: &Connection) -> Result<()> {
                  mtime INTEGER NOT NULL,
                  size INTEGER NOT NULL,
                  result TEXT NOT NULL
+             );",
+        )?;
+        conn.execute("PRAGMA user_version = 4", [])?;
+    }
+    if version < 5 {
+        // Artist biographies (data NULL = nothing found) and scrobbles waiting to be sent.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS artist_info (
+                 name TEXT PRIMARY KEY,
+                 fetched INTEGER NOT NULL,
+                 data TEXT
+             );
+             CREATE TABLE IF NOT EXISTS scrobble_queue (
+                 id INTEGER PRIMARY KEY,
+                 service TEXT NOT NULL,
+                 payload TEXT NOT NULL,
+                 created INTEGER NOT NULL
              );",
         )?;
         conn.execute(&format!("PRAGMA user_version = {VERSION}"), [])?;

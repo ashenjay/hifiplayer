@@ -10,6 +10,7 @@ import {
 import { ErrorBox, Loading, useLoad } from '../components/common'
 import { useNav } from '../nav'
 import { RemoteCard } from './RemoteCard'
+import { OnlineCard } from './OnlineCard'
 import { ACCENTS, DEFAULT_APPEARANCE, THEMES, applyAppearance } from '../theme'
 import type { Appearance } from '../api'
 import { SpotifyCard } from './Spotify'
@@ -24,6 +25,7 @@ export function SettingsPage() {
       <AnalysisSettings />
       <StreamingSettings />
       <RemoteCard />
+      <OnlineCard />
       <WindowsSettings />
       <About />
     </div>

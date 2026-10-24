@@ -321,6 +321,13 @@ const WHATS_NEW: { version: string; groups: [string, string[]][] } = {
       'Mini player, TV mode, and taskbar play / pause / next buttons',
       'Drop files or folders on the window to play them; drag tracks in the queue to reorder',
     ]],
+    ['Discover and connect', [
+      'Radio mixes, similar albums and “On this day” from your own library',
+      'Missing covers and artist biographies from MusicBrainz and Wikipedia',
+      'Scrobbling to ListenBrainz and Last.fm, and your status on Discord',
+      'DLNA: play from phone and NAS apps, or share your library with TVs and streamers',
+      'Phone remote: search, playlists, radio, queue editing, shuffle, repeat and sleep timer',
+    ]],
   ],
 }
 
