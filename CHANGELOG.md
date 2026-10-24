@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-25
+
 ### Added
 - **Lyrics online:** songs without lyrics of their own get them from LRCLIB (free, often synced to the music). Can be turned off in Settings → Online & network.
 - Lyrics stored inside DSF / DFF files are now shown.
@@ -76,7 +78,8 @@ First public release.
 - Spotify streams are Ogg Vorbis 320 kbps (not lossless).
 - Full Qobuz/Tidal streaming needs partner API access from those services.
 
-[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/ashenjay/hifiplayer/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/ashenjay/hifiplayer/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ashenjay/hifiplayer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ashenjay/hifiplayer/compare/v1.0.0...v1.1.0
