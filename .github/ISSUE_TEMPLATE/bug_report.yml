@@ -1,0 +1,46 @@
+name: Bug report
+description: Something doesn't work or sounds wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! The details below help reproduce the problem.
+  - type: input
+    id: version
+    attributes:
+      label: HiFi Player version
+      description: Settings → About
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+  - type: dropdown
+    id: output
+    attributes:
+      label: Output
+      options:
+        - ASIO
+        - WASAPI Exclusive
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: DAC / audio device and driver
+      placeholder: iFi ZEN DAC, iFi ASIO driver 5.x
+  - type: input
+    id: source
+    attributes:
+      label: What was playing
+      description: File format (e.g. DSF DSD128, FLAC 24/96) or Spotify
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Steps to reproduce, error messages, and the signal path (click the quality badge) if relevant.
+    validations:
+      required: true

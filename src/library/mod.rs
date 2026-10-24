@@ -61,7 +61,8 @@ CREATE INDEX IF NOT EXISTS tracks_album ON tracks(album_id);
 CREATE INDEX IF NOT EXISTS tracks_root ON tracks(root);
 ";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Album {
     pub id: i64,
     pub title: String,
@@ -74,7 +75,8 @@ pub struct Album {
     pub quality: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Track {
     pub id: i64,
     pub path: PathBuf,
@@ -88,14 +90,16 @@ pub struct Track {
     pub quality: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Artist {
     pub name: String,
     pub albums: u32,
     pub tracks: u32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScanReport {
     pub found: usize,
     pub added: usize,
@@ -110,7 +114,8 @@ pub struct ScanReport {
     pub seconds: f64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Stats {
     pub folders: usize,
     pub albums: usize,
@@ -511,6 +516,17 @@ impl Library {
         let pattern = filter.map(|f| format!("%{f}%"));
         let mut st = self.conn.prepare(&sql)?;
         let rows = st.query_map([pattern], Self::album_from_row)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Albums of one artist, oldest first.
+    pub fn artist_albums(&self, artist: &str) -> Result<Vec<Album>> {
+        let sql = format!(
+            "{} WHERE a.artist = ?1 COLLATE NOCASE GROUP BY a.id ORDER BY a.year, a.title COLLATE NOCASE",
+            Self::ALBUM_SELECT
+        );
+        let mut st = self.conn.prepare(&sql)?;
+        let rows = st.query_map([artist], Self::album_from_row)?.collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 

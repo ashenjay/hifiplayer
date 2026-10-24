@@ -1,2 +1,6 @@
 /target
 /test-files
+/app/node_modules
+/app/dist
+/app/src-tauri/gen
+/.claude

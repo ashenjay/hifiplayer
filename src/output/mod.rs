@@ -18,7 +18,8 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use rtrb::Consumer;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Backend {
     Wasapi,
     Asio,
@@ -48,6 +49,8 @@ impl StreamFormat {
 #[derive(Default)]
 pub struct Control {
     pub stop: AtomicBool,
+    /// While set, the device keeps running on silence and the ring is not consumed.
+    pub paused: AtomicBool,
     /// Ring-buffer frames handed to the device so far.
     pub frames_played: AtomicU64,
     pub underruns: AtomicU64,
@@ -56,6 +59,10 @@ pub struct Control {
 impl Control {
     pub fn stopped(&self) -> bool {
         self.stop.load(Ordering::Relaxed)
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
     }
 }
 
@@ -118,18 +125,19 @@ pub(crate) fn wait_for_prefill(consumer: &Consumer<i32>, target: usize, ctrl: &C
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct DeviceInfo {
     pub backend: Backend,
     pub name: String,
     pub details: String,
 }
 
-/// All playback devices. ASIO drivers are opened briefly to read their capabilities.
-pub fn list_devices() -> Vec<DeviceInfo> {
+/// All playback devices. With `probe_asio`, ASIO drivers are opened briefly
+/// to read their capabilities (avoid that while ASIO is playing).
+pub fn list_devices(probe_asio: bool) -> Vec<DeviceInfo> {
     let mut out = wasapi_out::list().unwrap_or_else(|e| {
         vec![DeviceInfo { backend: Backend::Wasapi, name: "(error)".into(), details: e.to_string() }]
     });
-    out.extend(asio::list());
+    out.extend(asio::list(probe_asio));
     out
 }

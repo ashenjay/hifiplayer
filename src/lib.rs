@@ -6,4 +6,8 @@ pub mod dsd;
 pub mod engine;
 pub mod library;
 pub mod output;
+pub mod player;
+pub mod settings;
 pub mod source;
+pub mod spotify;
+pub mod streaming;

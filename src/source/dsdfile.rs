@@ -26,6 +26,8 @@ pub struct DsdSource {
     /// Valid DSD bytes per channel in the file.
     total_bytes_per_ch: u64,
     read_bytes_per_ch: u64,
+    /// File offset of the first audio byte.
+    data_start: u64,
     scratch: Vec<u8>,
 }
 
@@ -73,6 +75,7 @@ impl DsdSource {
             bail!("DSF: missing data chunk");
         }
         let _data_size = read_u64_le(&mut f)?;
+        let data_start = f.stream_position()?;
 
         Ok(Self {
             file: f,
@@ -81,6 +84,7 @@ impl DsdSource {
             channels,
             total_bytes_per_ch: sample_count / 8,
             read_bytes_per_ch: 0,
+            data_start,
             scratch: Vec::new(),
         })
     }
@@ -136,6 +140,7 @@ impl DsdSource {
                     if rate == 0 || channels == 0 {
                         bail!("DFF: missing sample rate or channel count");
                     }
+                    let data_start = f.stream_position()?;
                     return Ok(Self {
                         file: f,
                         container: Container::Dff,
@@ -143,6 +148,7 @@ impl DsdSource {
                         channels,
                         total_bytes_per_ch: size / channels as u64,
                         read_bytes_per_ch: 0,
+                        data_start,
                         scratch: Vec::new(),
                     });
                 }
@@ -167,6 +173,21 @@ impl DsdSource {
 
     pub fn duration_secs(&self) -> f64 {
         self.total_bytes_per_ch as f64 * 8.0 / self.rate as f64
+    }
+
+    /// Jump to `secs`. DSF seeks to the start of the containing block (at most ~12 ms early).
+    pub fn seek(&mut self, secs: f64) -> Result<()> {
+        let byte = ((secs.max(0.0) * self.rate as f64 / 8.0) as u64).min(self.total_bytes_per_ch);
+        let (offset, per_ch) = match self.container {
+            Container::Dsf { block_size, .. } => {
+                let block = byte / block_size as u64;
+                (block * block_size as u64 * self.channels as u64, block * block_size as u64)
+            }
+            Container::Dff => (byte * self.channels as u64, byte),
+        };
+        self.file.seek(SeekFrom::Start(self.data_start + offset))?;
+        self.read_bytes_per_ch = per_ch;
+        Ok(())
     }
 
     /// Read the next chunk of byte-interleaved, MSB-first DSD into `out`.

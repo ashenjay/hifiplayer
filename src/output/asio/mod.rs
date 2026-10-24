@@ -197,11 +197,21 @@ const PCM_RATES: [u32; 10] =
     [44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000, 705_600, 768_000];
 const DSD_RATES: [u32; 4] = [2_822_400, 5_644_800, 11_289_600, 22_579_200];
 
-pub fn list() -> Vec<DeviceInfo> {
+/// Installed ASIO drivers. With `probe`, each driver is loaded briefly to read
+/// its capabilities; skip that while an ASIO stream is playing, since loading
+/// a driver a second time can disturb the running stream.
+pub fn list(probe: bool) -> Vec<DeviceInfo> {
     drivers()
         .into_iter()
         .map(|entry| {
             let name = entry.name.clone();
+            if !probe {
+                return DeviceInfo {
+                    backend: Backend::Asio,
+                    name,
+                    details: "Capabilities are shown when playback is stopped".into(),
+                };
+            }
             let details = on_sta_thread(move || describe(&entry))
                 .unwrap_or_else(|| Err(anyhow!("driver crashed while probing")))
                 .unwrap_or_else(|e| format!("unavailable: {e:#}"));
@@ -299,7 +309,7 @@ extern "C" fn buffer_switch(index: i32, _direct: AsioBool) {
     let st = unsafe { &*p };
     let consumer = unsafe { &mut *st.consumer.get() };
     let half = (index & 1) as usize;
-    let running = st.running.load(Ordering::Relaxed);
+    let running = st.running.load(Ordering::Relaxed) && !st.ctrl.is_paused();
 
     let mut pop = |silence: i32| -> i32 {
         if !running {
@@ -565,8 +575,10 @@ fn stream(
         }
         thread::sleep(Duration::from_millis(5));
     }
-    // Let the last buffers reach the DAC before stopping.
-    thread::sleep(buffer_time * 3);
+    // At the natural end, let the last buffers reach the DAC before stopping.
+    if !ctrl.stopped() {
+        thread::sleep(buffer_time * 3);
+    }
     unsafe { (drv.vt().stop)(drv.0) };
     if dsd {
         drv.set_io_format(K_ASIO_PCM_FORMAT);

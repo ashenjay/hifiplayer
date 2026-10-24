@@ -1,0 +1,37 @@
+# Builds the Windows installer and creates a draft GitHub release when a
+# version tag is pushed:   git tag v1.0.1 && git push origin v1.0.1
+# Review the draft on GitHub, paste the CHANGELOG entry, then publish it.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+        working-directory: app
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: HiFi Player ${{ github.ref_name }}
+          releaseBody: See CHANGELOG.md for what's new in this version.
+          releaseDraft: true
+          prerelease: false

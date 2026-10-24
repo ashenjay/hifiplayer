@@ -1,0 +1,11 @@
+name: Feature request
+description: Suggest an idea for HiFi Player
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the feature and how you would use it. Note that HiFi Player keeps playback bit-perfect, so DSP features (volume, EQ, resampling) are out of scope.
+    validations:
+      required: true

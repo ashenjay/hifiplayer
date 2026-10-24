@@ -194,7 +194,12 @@ pub fn run(
             data.clear();
             data.reserve(space * channels * bytes_per_sample);
             let mut got_audio = false;
+            let paused = ctrl.is_paused();
             for _ in 0..space * channels {
+                if paused {
+                    push_sample(&mut data, 0, opened.store_bits);
+                    continue;
+                }
                 let s = match consumer.pop() {
                     Ok(s) => {
                         got_audio = true;
@@ -213,7 +218,7 @@ pub fn run(
             let frames = if got_audio { space as u64 } else { 0 };
             render.write_to_device(space, &data, None)?;
             ctrl.frames_played.fetch_add(frames, Ordering::Relaxed);
-            if consumer.is_abandoned() && consumer.slots() == 0 {
+            if !paused && consumer.is_abandoned() && consumer.slots() == 0 {
                 draining = true;
             }
         }

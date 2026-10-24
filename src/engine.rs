@@ -1,21 +1,27 @@
-//! Playback engine: picks the best bit-perfect path for a file on the chosen
+//! Playback engine: picks the best bit-perfect path for a track on the chosen
 //! device, falls back when the device refuses, and runs the decode thread.
+//!
+//! Consecutive tracks with the same format are played gaplessly: the decoder
+//! moves on to the next source without closing the device, and records where
+//! each track starts so the player can tell which one is audible.
 
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use rtrb::{Producer, RingBuffer};
+use serde::{Deserialize, Serialize};
 
 use crate::dsd::{self, DopEncoder, DsdToPcm};
 use crate::output::{self, Backend, Control, RunningOutput, StreamFormat};
-use crate::source::{Source, SourceFormat, dsd_name, khz};
+use crate::source::{Media, Source, SourceFormat, dsd_name, khz};
 
 /// How to play DSD files.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum DsdMode {
     /// Native DSD on ASIO if the driver supports it, else DoP, else convert to PCM.
     Auto,
@@ -27,11 +33,17 @@ pub enum DsdMode {
     Pcm,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayOptions {
     pub backend: Backend,
     pub device: Option<String>,
     pub dsd_mode: DsdMode,
+}
+
+impl Default for PlayOptions {
+    fn default() -> Self {
+        Self { backend: Backend::Wasapi, device: None, dsd_mode: DsdMode::Auto }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +101,15 @@ impl Plan {
             }
         }
     }
+
+    fn kind(&self) -> PathKind {
+        match self {
+            Plan::Pcm { .. } => PathKind::Pcm,
+            Plan::Native { .. } => PathKind::NativeDsd,
+            Plan::Dop { .. } => PathKind::Dop,
+            Plan::ToPcm { .. } => PathKind::Converted,
+        }
+    }
 }
 
 fn plans(format: SourceFormat, opts: &PlayOptions) -> Result<Vec<Plan>> {
@@ -103,7 +124,7 @@ fn plans(format: SourceFormat, opts: &PlayOptions) -> Result<Vec<Plan>> {
                 .map(|out_rate| Plan::ToPcm { dsd_rate: rate, channels, out_rate });
             let list = match (opts.dsd_mode, opts.backend) {
                 (DsdMode::Native, Backend::Wasapi) => {
-                    bail!("native DSD needs ASIO; use --output asio, or --dsd dop with WASAPI")
+                    bail!("native DSD needs ASIO; use the ASIO output, or DoP with WASAPI")
                 }
                 (DsdMode::Native, Backend::Asio) => vec![native],
                 (DsdMode::Dop, _) => vec![dop],
@@ -116,29 +137,84 @@ fn plans(format: SourceFormat, opts: &PlayOptions) -> Result<Vec<Plan>> {
     }
 }
 
+/// How the audio reaches the DAC, for the colour of the signal path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PathKind {
+    Pcm,
+    NativeDsd,
+    Dop,
+    Converted,
+}
+
 /// What the listener gets, for a Roon-style signal path display.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SignalPath {
     pub source: String,
     pub processing: String,
     pub output: String,
     pub bit_perfect: bool,
+    pub kind: PathKind,
     /// Formats the device refused before one was accepted.
     pub fallbacks: Vec<String>,
+}
+
+/// Called when a track ends: given the index that finished, returns the next
+/// (index, media) to play, or None at the end of the queue.
+pub type NextFn = Box<dyn FnMut(usize) -> Option<(usize, Media)> + Send>;
+
+/// Where a track starts inside one continuous (gapless) output stream.
+#[derive(Clone, Copy, Debug)]
+pub struct Boundary {
+    pub start_frame: u64,
+    pub index: usize,
+    pub duration: Option<f64>,
+}
+
+#[derive(Default)]
+struct Shared {
+    boundaries: Mutex<Vec<Boundary>>,
+    /// Next track that needs a new output stream (different format).
+    pending: Mutex<Option<(usize, Media)>>,
+    /// Tracks that could not be opened and were skipped.
+    skipped: Mutex<Vec<(usize, String)>>,
 }
 
 pub struct Playback {
     ctrl: Arc<Control>,
     output: RunningOutput,
     producer: JoinHandle<Result<()>>,
+    shared: Arc<Shared>,
     frame_rate: f64,
+    start_offset: f64,
     pub path: SignalPath,
+}
+
+/// Which track is audible and where in it.
+#[derive(Clone, Copy, Debug)]
+pub struct Position {
+    pub index: usize,
+    pub secs: f64,
     pub duration: Option<f64>,
 }
 
 impl Playback {
-    pub fn position_secs(&self) -> f64 {
-        self.ctrl.frames_played.load(Ordering::Relaxed) as f64 / self.frame_rate
+    pub fn position(&self) -> Position {
+        let played = self.ctrl.frames_played.load(Ordering::Relaxed);
+        let b = self.shared.boundaries.lock().unwrap();
+        let (i, cur) = b
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, b)| b.start_frame <= played)
+            .map(|(i, b)| (i, *b))
+            .unwrap_or((0, b[0]));
+        let offset = if i == 0 { self.start_offset } else { 0.0 };
+        Position {
+            index: cur.index,
+            secs: offset + (played - cur.start_frame) as f64 / self.frame_rate,
+            duration: cur.duration,
+        }
     }
 
     pub fn underruns(&self) -> u64 {
@@ -149,28 +225,55 @@ impl Playback {
         self.output.is_finished()
     }
 
+    pub fn set_paused(&self, paused: bool) {
+        self.ctrl.paused.store(paused, Ordering::Relaxed);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.ctrl.is_paused()
+    }
+
     pub fn stop(&self) {
         self.ctrl.stop.store(true, Ordering::Relaxed);
     }
 
-    pub fn wait(self) -> Result<()> {
+    /// Tracks skipped because they could not be opened.
+    pub fn take_skipped(&self) -> Vec<(usize, String)> {
+        std::mem::take(&mut *self.shared.skipped.lock().unwrap())
+    }
+
+    /// Wait for the stream to end. Returns the next track that needs its own
+    /// stream (a format change), if the queue continues.
+    pub fn wait(self) -> Result<Option<(usize, Media)>> {
         let out = self.output.join();
         let prod = self.producer.join().map_err(|_| anyhow!("decoder thread panicked"))?;
-        out.and(prod)
+        out.and(prod)?;
+        Ok(self.shared.pending.lock().unwrap().take())
     }
 }
 
+/// Play a single file (no queue).
 pub fn play(path: &Path, opts: &PlayOptions) -> Result<Playback> {
-    let source = Source::open(path)?;
+    start(0, &Media::File { path: path.to_path_buf() }, 0.0, opts, Box::new(|_| None))
+}
+
+/// Start playing `media` (queue position `index`) from `start_secs`.
+/// `next` supplies the following tracks for gapless playback.
+pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, next: NextFn) -> Result<Playback> {
+    let mut source = Source::open_media(media)?;
+    if start_secs > 0.0 {
+        source.seek(start_secs)?;
+    }
     let format = source.format();
-    let duration = source.duration_secs();
     let source_label = format!("{} · {format}", source.codec_name());
 
     let mut fallbacks = Vec::new();
     for plan in plans(format, opts)? {
         let ctrl = Arc::new(Control::default());
-        // One second of audio in the ring buffer.
-        let capacity = (plan.frame_rate() as usize * plan.channels()).max(4096);
+        // One second of audio in the ring buffer; live Spotify audio uses a
+        // quarter second so pause and seek in the Spotify app react quickly.
+        let secs = if matches!(source, Source::Live(_)) { 0.25 } else { 1.0 };
+        let capacity = ((plan.frame_rate() * secs) as usize * plan.channels()).max(4096);
         let (producer, consumer) = RingBuffer::<i32>::new(capacity);
         match output::start(opts.backend, opts.device.clone(), plan.stream_format(), consumer, ctrl.clone()) {
             Ok(output) => {
@@ -184,63 +287,158 @@ pub fn play(path: &Path, opts: &PlayOptions) -> Result<Playback> {
                     processing: plan.processing(),
                     output: output.info.description.clone(),
                     bit_perfect,
+                    kind: plan.kind(),
                     fallbacks,
                 };
-                let prod_ctrl = ctrl.clone();
+                let shared = Arc::new(Shared::default());
+                shared.boundaries.lock().unwrap().push(Boundary {
+                    start_frame: 0,
+                    index,
+                    duration: source.duration_secs(),
+                });
+                let (prod_ctrl, prod_shared) = (ctrl.clone(), shared.clone());
                 let producer = thread::Builder::new()
                     .name("decoder".into())
-                    .spawn(move || produce(source, plan, producer, prod_ctrl))?;
-                return Ok(Playback { ctrl, output, producer, frame_rate: plan.frame_rate(), path, duration });
+                    .spawn(move || produce(source, index, plan, producer, prod_ctrl, next, prod_shared))?;
+                return Ok(Playback {
+                    ctrl,
+                    output,
+                    producer,
+                    shared,
+                    frame_rate: plan.frame_rate(),
+                    start_offset: start_secs.max(0.0),
+                    path,
+                });
             }
             Err(e) => fallbacks.push(format!("{}: {e:#}", plan.processing())),
         }
     }
-    bail!("the device could not play this file:\n  {}", fallbacks.join("\n  "))
+    bail!("the device could not play this track:\n  {}", fallbacks.join("\n  "))
 }
 
-fn produce(source: Source, plan: Plan, mut prod: Producer<i32>, ctrl: Arc<Control>) -> Result<()> {
-    let mut out: Vec<i32> = Vec::new();
-    match source {
-        Source::Pcm(mut s) => {
-            while s.read(&mut out)? {
-                if !push_all(&mut prod, &out, &ctrl) {
+/// Per-stream DSD state carried across gapless tracks.
+struct Converters {
+    dop: DopEncoder,
+    to_pcm: Option<DsdToPcm>,
+}
+
+fn produce(
+    mut source: Source,
+    mut index: usize,
+    plan: Plan,
+    mut prod: Producer<i32>,
+    ctrl: Arc<Control>,
+    mut next: NextFn,
+    shared: Arc<Shared>,
+) -> Result<()> {
+    let channels = plan.channels();
+    let mut conv = Converters {
+        dop: DopEncoder::new(channels),
+        to_pcm: match plan {
+            Plan::ToPcm { dsd_rate, out_rate, .. } => Some(DsdToPcm::new(dsd_rate, channels, out_rate)),
+            _ => None,
+        },
+    };
+    let mut pushed: u64 = 0;
+    loop {
+        if !pump(&mut source, plan, &mut prod, &ctrl, &mut conv, &mut pushed)? {
+            return Ok(()); // stopped
+        }
+        if matches!(source, Source::Live(_)) {
+            // Spotify manages its own queue; the live stream just ended.
+            return Ok(());
+        }
+        // Find the next playable track.
+        loop {
+            let Some((next_index, media)) = next(index) else {
+                finish(plan, &mut prod, &ctrl, &mut conv);
+                return Ok(());
+            };
+            match Source::open_media(&media) {
+                Ok(s) if s.format() == source.format() => {
+                    shared.boundaries.lock().unwrap().push(Boundary {
+                        start_frame: pushed,
+                        index: next_index,
+                        duration: s.duration_secs(),
+                    });
+                    source = s;
+                    index = next_index;
+                    break;
+                }
+                Ok(_) => {
+                    *shared.pending.lock().unwrap() = Some((next_index, media));
+                    finish(plan, &mut prod, &ctrl, &mut conv);
                     return Ok(());
+                }
+                Err(e) => {
+                    shared.skipped.lock().unwrap().push((next_index, format!("{e:#}")));
+                    index = next_index;
                 }
             }
         }
-        Source::Dsd(mut s) => {
-            let channels = plan.channels();
-            let mut dop = DopEncoder::new(channels);
-            let mut conv = match plan {
-                Plan::ToPcm { dsd_rate, out_rate, .. } => Some(DsdToPcm::new(dsd_rate, channels, out_rate)),
-                _ => None,
-            };
+    }
+    // Dropping the producer tells the output that the stream has ended.
+}
+
+/// Decode `source` to the end into the ring. Returns false if stopped.
+fn pump(
+    source: &mut Source,
+    plan: Plan,
+    prod: &mut Producer<i32>,
+    ctrl: &Control,
+    conv: &mut Converters,
+    pushed: &mut u64,
+) -> Result<bool> {
+    let channels = plan.channels() as u64;
+    let mut out: Vec<i32> = Vec::new();
+    match source {
+        Source::Live(s) => {
+            while s.read(&mut out, &|| ctrl.stopped())? {
+                if !push_all(prod, &out, ctrl) {
+                    return Ok(false);
+                }
+                *pushed += out.len() as u64 / channels;
+            }
+            return Ok(!ctrl.stopped());
+        }
+        Source::Pcm(s) => {
+            while s.read(&mut out)? {
+                if !push_all(prod, &out, ctrl) {
+                    return Ok(false);
+                }
+                *pushed += out.len() as u64 / channels;
+            }
+        }
+        Source::Dsd(s) => {
             let mut bytes = Vec::new();
             while s.read(&mut bytes)? {
                 out.clear();
                 match plan {
                     Plan::Native { .. } => out.extend(bytes.iter().map(|&b| b as i32)),
-                    Plan::Dop { .. } => dop.encode(&bytes, &mut out),
-                    Plan::ToPcm { .. } => conv.as_mut().unwrap().process(&bytes, &mut out),
+                    Plan::Dop { .. } => conv.dop.encode(&bytes, &mut out),
+                    Plan::ToPcm { .. } => conv.to_pcm.as_mut().unwrap().process(&bytes, &mut out),
                     Plan::Pcm { .. } => unreachable!(),
                 }
-                if !push_all(&mut prod, &out, &ctrl) {
-                    return Ok(());
+                if !push_all(prod, &out, ctrl) {
+                    return Ok(false);
                 }
+                *pushed += out.len() as u64 / channels;
             }
-            // End on DSD idle silence (~50 ms) so the DAC fades out without a click.
-            out.clear();
-            let frames = (plan.frame_rate() * 0.05) as usize;
-            match plan {
-                Plan::Native { .. } => out.resize(frames * channels, dsd::DSD_SILENCE as i32),
-                Plan::Dop { .. } => dop.silence(frames, &mut out),
-                _ => {}
-            }
-            push_all(&mut prod, &out, &ctrl);
         }
     }
-    // Dropping the producer tells the output that the stream has ended.
-    Ok(())
+    Ok(true)
+}
+
+/// End on DSD idle silence (~50 ms) so the DAC fades out without a click.
+fn finish(plan: Plan, prod: &mut Producer<i32>, ctrl: &Control, conv: &mut Converters) {
+    let mut out = Vec::new();
+    let frames = (plan.frame_rate() * 0.05) as usize;
+    match plan {
+        Plan::Native { .. } => out.resize(frames * plan.channels(), dsd::DSD_SILENCE as i32),
+        Plan::Dop { .. } => conv.dop.silence(frames, &mut out),
+        _ => {}
+    }
+    push_all(prod, &out, ctrl);
 }
 
 /// Push everything, waiting for space. Returns false if playback was stopped.

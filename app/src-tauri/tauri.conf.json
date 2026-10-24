@@ -1,0 +1,65 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "HiFi Player",
+  "version": "1.0.0",
+  "identifier": "com.hifiplayer.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "HiFi Player",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1000,
+        "minHeight": 640,
+        "resizable": true,
+        "backgroundColor": "#121214"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https: data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "HiFi Player Project",
+    "copyright": "Copyright © 2026 HiFi Player Project. HiFi Player™ is free software under the GNU GPL v3.",
+    "license": "GPL-3.0-only",
+    "licenseFile": "../../LICENSE",
+    "category": "Music",
+    "resources": {
+      "../../LICENSE": "LICENSE.txt",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../CHANGELOG.md": "CHANGELOG.md"
+    },
+    "shortDescription": "HiFi Player",
+    "longDescription": "Bit-perfect music player for Windows with ASIO, WASAPI Exclusive, native DSD, a music library and Spotify Connect.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "../../assets/installer-header.bmp",
+        "sidebarImage": "../../assets/installer-sidebar.bmp",
+        "startMenuFolder": "HiFi Player",
+        "compression": "lzma"
+      }
+    }
+  }
+}

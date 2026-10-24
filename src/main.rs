@@ -99,7 +99,7 @@ fn main() {
 
 fn devices() {
     println!("Probing devices (ASIO drivers are opened briefly)...\n");
-    let all = output::list_devices();
+    let all = output::list_devices(true);
     for (backend, title) in [(Backend::Wasapi, "WASAPI Exclusive"), (Backend::Asio, "ASIO")] {
         println!("{title}:");
         let mut any = false;
@@ -296,14 +296,14 @@ fn play(opts: PlayOptions, files: Vec<PathBuf>) -> Result<()> {
             println!("  (not used) : {f}");
         }
 
-        let duration = playback.duration.map(clock).unwrap_or_else(|| "--:--".into());
+        let duration = playback.position().duration.map(clock).unwrap_or_else(|| "--:--".into());
         while !playback.is_finished() {
             if QUIT.load(Ordering::Relaxed) {
                 playback.stop();
             }
             let under = playback.underruns();
             let warn = if under > 0 { format!("  underruns: {under}") } else { String::new() };
-            print!("\r  {} / {duration}{warn}   ", clock(playback.position_secs()));
+            print!("\r  {} / {duration}{warn}   ", clock(playback.position().secs));
             let _ = std::io::stdout().flush();
             thread::sleep(Duration::from_millis(250));
         }

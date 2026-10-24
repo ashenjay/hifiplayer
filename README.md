@@ -1,75 +1,182 @@
-# hifiplayer
+<div align="center">
 
-Bit-perfect music player for Windows. Phase 1: the playback engine and a command-line player.
+<img src="assets/icon-source.png" alt="HiFi Player logo" width="128" />
 
-## What works
+# HiFi Player
 
-| Feature | Details |
+### Bit-perfect music player for Windows
+
+*An audiophile player that sends your music to the DAC exactly as it was recorded: native DSD over ASIO, WASAPI Exclusive, gapless playback, a fast music library and Spotify Connect, in a clean Roon-style interface.*
+
+<br />
+
+[![Release](https://img.shields.io/badge/release-v1.0.0-8b5cf6?style=for-the-badge&logo=github)](../../releases)
+[![License](https://img.shields.io/badge/license-GPLv3-38bdf8?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-22c55e?style=for-the-badge&logo=windows)](#-download)
+<br />
+[![Rust](https://img.shields.io/badge/engine-Rust-f97316?style=for-the-badge&logo=rust)](src)
+[![Tauri](https://img.shields.io/badge/app-Tauri%202%20%2B%20React-eab308?style=for-the-badge&logo=tauri)](app)
+
+<br />
+
+[📥 Download](#-download) • [✨ Key Features](#-key-features) • [🎧 Signal Path](#-signal-path) • [🟢 Spotify Connect](#-spotify-connect) • [🛠️ Build from Source](#️-build-from-source) • [🤝 Contributing](#-contributing) • [⚖️ Legal Notice](#️-legal-notice)
+
+</div>
+
+> [!IMPORTANT]
+> **HiFi Player** is an independent, free and open-source project. It is not affiliated with, endorsed by, or sponsored by Steinberg, Spotify, Qobuz or TIDAL. Spotify Connect support uses the unofficial [librespot](https://github.com/librespot-org/librespot) library and requires Spotify Premium.
+
+---
+
+## ✨ Key Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🎧 Audiophile Playback
+- **Bit-perfect output:** ASIO (direct driver access) and WASAPI Exclusive bypass the Windows mixer. No resampling, no volume or EQ processing, ever.
+- **Native DSD:** DSD64 up to DSD512 straight to the DAC over ASIO, with DoP and DSD→PCM fallbacks for other DACs.
+- **True gapless:** consecutive tracks in the same format play through one uninterrupted stream.
+- **Locked pause:** the DAC stays locked on silence while paused, so there are no clicks or relocks.
+
+</td>
+<td width="50%" valign="top">
+
+### 📚 Music Library
+- **Fast scanning:** thousands of tracks in seconds; rescans only read changed files.
+- **Smart grouping:** compilations, "feat." artists and untagged `Artist - Album` folders are sorted out automatically.
+- **Cover art:** embedded artwork or `folder.jpg` / `cover.jpg`.
+- **Formats:** FLAC, ALAC, WAV, AIFF, DSF, DFF, MP3, AAC, Ogg Vorbis.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🎨 Interface
+- **Album grid:** Roon-inspired dark theme with DSD / Hi-Res / CD filters.
+- **Library pages:** album and artist pages, instant search, queue management.
+- **Now Playing:** full-screen view plus a bar with a seek bar and a quality badge.
+- **Keyboard:** Space to play/pause, Alt+← to go back.
+
+</td>
+<td width="50%" valign="top">
+
+### 🟢 Streaming
+- **Spotify Connect:** pick "HiFi Player" as a speaker in any Spotify app.
+- **Same output path:** Spotify plays through the same ASIO / WASAPI output as your files.
+- **Two-way control:** from the Spotify app or from HiFi Player.
+- **Qobuz & TIDAL:** screens for users who have partner API access.
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📥 Download
+
+Get the latest installer from the **[Releases page](../../releases)**: `HiFi Player_x.y.z_x64-setup.exe`.
+
+The setup wizard lets you install for just you or for all users, choose the folder, and add Start menu and desktop shortcuts. The app updates in place when you install a newer version.
+
+**Requirements:** Windows 10 or 11 (64-bit). For native DSD you need a DAC whose ASIO driver supports DSD (e.g. iFi, XMOS/Thesycon-based DACs).
+
+> [!TIP]
+> There is **no volume control in HiFi Player**, because a bit-perfect stream can't have one. Set the level on your DAC or amplifier, and start low.
+
+---
+
+## 🎧 Signal Path
+
+Click the quality badge in the Now Playing bar to see exactly what reaches your DAC:
+
+| Dot | Meaning |
 |---|---|
-| WASAPI Exclusive | Bypasses the Windows mixer. Chooses 16, 24 or 24-in-32-bit to keep the stream bit-perfect. |
-| ASIO | Talks to drivers directly (no SDK needed). Int16/24/32 and float sample types. |
-| Native DSD | DSD64 to DSD512 over ASIO (DSF and DFF). |
-| DoP | DSD over PCM for WASAPI, or ASIO drivers without native DSD. |
-| DSD → PCM | FIR conversion to 176.4/88.2/44.1 kHz for DACs without DSD. |
-| PCM formats | FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC/M4A, Ogg Vorbis. |
-| Signal path | Shows source, processing, the exact device format, and whether playback is bit-perfect. |
+| 🟣 Purple | **Bit-perfect**: the source reaches the DAC untouched (PCM, native DSD, or DoP) |
+| 🟢 Green | **High quality, converted**: e.g. DSD→PCM for a DAC without DSD support |
+| 🟡 Yellow | **Lossy source**: MP3, AAC, Ogg (including Spotify) |
 
-| Music library | SQLite catalogue of folders, albums, artists and tracks. Incremental rescans, cover art, search. |
+Example: `DSF · DSD128 → None (native DSD128) → ASIO · iFi USB Audio Device · Native DSD 5.6448 MHz`
 
-Not yet: DST-compressed DFF, SACD ISO, volume/EQ/upsampling, gapless playback, UI, Spotify.
+---
 
-## Library
+## 🟢 Spotify Connect
 
-```
-hifiplayer library add "D:\Music"     # add a folder and scan it
-hifiplayer library scan               # pick up new, changed and deleted files (--full re-reads all)
-hifiplayer library albums [filter]    # list albums with their numbers
-hifiplayer library album 25           # tracks of album #25
-hifiplayer library artists
-hifiplayer library search "hotel"
-hifiplayer library stats
-hifiplayer play --output asio --device iFi --album 25
-```
+1. In HiFi Player open **Spotify** in the sidebar and click **Log in with Spotify**. You log in on Spotify's own page in your browser.
+2. Open Spotify on your phone or PC, tap the **devices** icon and choose **HiFi Player**.
+3. The music plays through HiFi Player's output to your DAC, and the track, cover and controls appear in the app.
 
-- **Storage:** the database and cached cover art live in `%LOCALAPPDATA%\hifiplayer`.
-- **Tags:** read with lofty for FLAC, MP3, M4A, WAV and AIFF, and with a built-in ID3v2 reader for DSF and DFF.
-- **Grouping:** albums are grouped by album artist and title, with these rules:
-  - Compilation folders (many tracks with mostly different album tags) become one "Various Artists" album named after the folder.
-  - Without an album-artist tag, the artist on most of the tracks is used; "feat." guests are ignored.
-  - Untagged files take the artist and album from an "Artist - Album (Year)" folder name.
-- **Unavailable folders:** a folder that can't be read (e.g. an unplugged drive) keeps its tracks instead of being wiped.
-- **Unreadable files** are recorded and only retried when the file changes, or with `--full`.
+Spotify sends Ogg Vorbis at 320 kbps to Connect devices; lossless is not available to third-party devices. Your login is stored encrypted with Windows DPAPI.
 
-## Usage
+---
 
-```
-hifiplayer devices
-hifiplayer play "D:\Music\Album"                                   # WASAPI Exclusive, default device
-hifiplayer play --device "AMR HD+" song.flac                        # pick a WASAPI device by name
-hifiplayer play --output asio --device iFi "D:\Music\DSD"          # ASIO, native DSD when possible
-hifiplayer play --output asio --device iFi --dsd dop track.dsf      # force DoP
-hifiplayer play --dsd pcm track.dff                                 # convert DSD to PCM
+## 🛠️ Build from Source
+
+**Requirements:** Rust (MSVC toolchain), Visual Studio C++ Build Tools, Node.js 20+.
+
+```powershell
+git clone https://github.com/ashenjay/hifiplayer.git
+cd hifiplayer\app
+npm install
+npx tauri build      # installer: target\release\bundle\nsis\
+npx tauri dev        # run with hot reload
 ```
 
-Ctrl+C stops playback. With `--dsd auto` (the default), ASIO tries native DSD, then DoP, then PCM conversion. WASAPI tries DoP, then PCM conversion. If a DAC plays noise for DSD over WASAPI, it doesn't support DoP: use `--dsd pcm`.
+The playback engine also comes with a command-line player:
 
-There is no volume control, because a bit-perfect stream can't have one. Set the level on the DAC or amplifier.
-
-## Build
-
-Requires Rust (MSVC toolchain) and the Visual Studio C++ Build Tools.
-
-```
-cargo build --release                                       # target\release\hifiplayer.exe
-cargo test
-cargo run --release --example make_test_files -- test-files # quiet -30 dB test tones
+```powershell
+cargo run --release -- devices
+cargo run --release -- play --output asio --device iFi "D:\Music\Album"
+cargo test --workspace
 ```
 
-## Layout
+<details>
+<summary><b>Project layout</b></summary>
 
-- `src/source/`: PCM decoding (symphonia) and the DSF/DFF readers
-- `src/dsd/`: DoP packing and DSD→PCM conversion
-- `src/output/`: WASAPI Exclusive and ASIO (`asio/ffi.rs` is the raw driver interface)
-- `src/library/`: library database, folder scanning, tag reading (`id3.rs` for DSD files)
-- `src/engine.rs`: picks the playback path, falls back when the device refuses, runs the decode thread
-- `src/main.rs`: command-line interface
+| Path | Contents |
+|---|---|
+| `src/source/` | Decoding (symphonia), DSF/DFF readers, HTTP streams |
+| `src/dsd/` | DoP packing and DSD→PCM conversion |
+| `src/output/` | WASAPI Exclusive and ASIO (`asio/ffi.rs` is the raw driver interface) |
+| `src/engine.rs` | Playback path selection, fallbacks, gapless decoding |
+| `src/player.rs` | Queue and transport |
+| `src/library/` | Library database, folder scanning, tag reading |
+| `src/spotify.rs` | Spotify Connect receiver (librespot) |
+| `src/streaming/` | Qobuz and TIDAL |
+| `app/` | Desktop app: Tauri 2 + React + TypeScript |
+
+</details>
+
+<details>
+<summary><b>Releasing a new version</b></summary>
+
+Versions follow [Semantic Versioning](https://semver.org): `1.0.1` for bug fixes, `1.1.0` for new features.
+
+1. `powershell -File scripts\bump-version.ps1 1.0.1` sets the version everywhere.
+2. Add the changes to [CHANGELOG.md](CHANGELOG.md).
+3. If dependencies changed: `powershell -File scripts\third-party-notices.ps1`.
+4. Commit, then `git tag v1.0.1` and `git push origin main v1.0.1`.
+5. GitHub Actions builds the installer and creates a draft release. Review it and publish.
+
+</details>
+
+---
+
+## 🤝 Contributing
+
+Bug reports and ideas are welcome! Please use the **[issue forms](../../issues/new/choose)**. They ask for your version, DAC/driver and output type, which makes problems much easier to reproduce. Pull requests should keep playback bit-perfect: DSP features such as volume, EQ or resampling are out of scope.
+
+---
+
+## ⚖️ Legal Notice
+
+HiFi Player is free software: you can redistribute it and/or modify it under the terms of the **[GNU General Public License v3.0](LICENSE)**. It comes with **absolutely no warranty**. Third-party components and their licences are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+ASIO is a trademark of Steinberg Media Technologies GmbH. Spotify, Qobuz and TIDAL are trademarks of their respective owners. HiFi Player™ is not affiliated with or endorsed by any of them. Use streaming services in line with their terms of service.
+
+<div align="center">
+<br />
+<sub>Made for people who care about every bit.</sub>
+</div>
