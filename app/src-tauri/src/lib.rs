@@ -5,17 +5,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hifiplayer::engine::PlayOptions;
-use hifiplayer::library::{Album, Artist, Library, ScanReport, Stats, Track};
+use hifiplayer::library::{
+    Album, Artist, Facets, HealthReport, HistoryEntry, Library, ListeningStats, Playlist, ScanReport, SmartSearch, Stats,
+    Track,
+};
 use hifiplayer::output::{self, DeviceInfo};
 use hifiplayer::player::{Command, Player, PlayerState, QueueItem, Repeat, SleepTimer, Status};
 use hifiplayer::settings::{DesktopSettings, Settings, StreamQuality};
-use hifiplayer::source::{Media, set_stream_resolver};
+use hifiplayer::source::set_stream_resolver;
 use hifiplayer::spotify::{self, SpotifyStatus};
 use hifiplayer::streaming::tidal::{DeviceLogin, LoginPoll};
 use hifiplayer::streaming::{AccountStatus, ArtistPage, SearchResults, Services, StreamAlbum, StreamTrack};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
+mod background;
 mod desktop;
 mod remote;
 
@@ -73,16 +77,152 @@ async fn library_artist_albums(state: State<'_, AppState>, name: String) -> Res<
     state.library.lock().unwrap().artist_albums(&name).map_err(anyhow_err)
 }
 
+#[tauri::command]
+async fn library_search(state: State<'_, AppState>, text: String) -> Res<SmartSearch> {
+    state.library.lock().unwrap().smart_search(&text).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_composers(state: State<'_, AppState>) -> Res<Vec<Artist>> {
+    state.library.lock().unwrap().composers().map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_composer_albums(state: State<'_, AppState>, name: String) -> Res<Vec<Album>> {
+    state.library.lock().unwrap().composer_albums(&name).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_facets(state: State<'_, AppState>) -> Res<Facets> {
+    state.library.lock().unwrap().facets().map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_browse(
+    state: State<'_, AppState>,
+    genre: Option<String>,
+    decade: Option<u32>,
+    release_type: Option<String>,
+) -> Res<Vec<Album>> {
+    state.library.lock().unwrap().browse(genre.as_deref(), decade, release_type.as_deref()).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_versions(state: State<'_, AppState>, id: i64) -> Res<Vec<Album>> {
+    state.library.lock().unwrap().versions(id).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_health(state: State<'_, AppState>) -> Res<HealthReport> {
+    state.library.lock().unwrap().health().map_err(anyhow_err)
+}
+
+// ---- Favourites, ratings, history ------------------------------------------------
+
+#[tauri::command]
+async fn set_album_favorite(state: State<'_, AppState>, id: i64, on: bool) -> Res<()> {
+    state.library.lock().unwrap().set_album_favorite(id, on).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn set_track_favorite(state: State<'_, AppState>, id: i64, on: bool) -> Res<()> {
+    state.library.lock().unwrap().set_track_favorite(id, on).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn set_track_rating(state: State<'_, AppState>, id: i64, stars: u8) -> Res<()> {
+    state.library.lock().unwrap().set_track_rating(id, stars).map_err(anyhow_err)
+}
+
 #[derive(Serialize)]
-struct LibrarySearch {
+struct Favorites {
     albums: Vec<Album>,
     tracks: Vec<Track>,
 }
 
 #[tauri::command]
-async fn library_search(state: State<'_, AppState>, text: String) -> Res<LibrarySearch> {
-    let (albums, tracks) = state.library.lock().unwrap().search(&text).map_err(anyhow_err)?;
-    Ok(LibrarySearch { albums, tracks })
+async fn library_favorites(state: State<'_, AppState>) -> Res<Favorites> {
+    let lib = state.library.lock().unwrap();
+    Ok(Favorites { albums: lib.favorite_albums().map_err(anyhow_err)?, tracks: lib.favorite_tracks().map_err(anyhow_err)? })
+}
+
+#[tauri::command]
+async fn library_history(state: State<'_, AppState>, limit: u32) -> Res<Vec<HistoryEntry>> {
+    state.library.lock().unwrap().history(limit).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn library_listening(state: State<'_, AppState>) -> Res<ListeningStats> {
+    state.library.lock().unwrap().listening_stats().map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn clear_history(state: State<'_, AppState>) -> Res<()> {
+    state.library.lock().unwrap().clear_history().map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn queue_items_for_tracks(state: State<'_, AppState>, ids: Vec<i64>) -> Res<Vec<QueueItem>> {
+    let lib = state.library.lock().unwrap();
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(t) = lib.track(id).map_err(anyhow_err)? {
+            out.push(lib.queue_item(&t));
+        }
+    }
+    Ok(out)
+}
+
+// ---- Playlists -----------------------------------------------------------------------
+
+#[tauri::command]
+async fn playlists(state: State<'_, AppState>) -> Res<Vec<Playlist>> {
+    state.library.lock().unwrap().playlists().map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn playlist_create(state: State<'_, AppState>, name: String, items: Option<Vec<QueueItem>>) -> Res<i64> {
+    let mut lib = state.library.lock().unwrap();
+    let id = lib.create_playlist(&name).map_err(anyhow_err)?;
+    if let Some(items) = items {
+        lib.set_playlist_items(id, &items).map_err(anyhow_err)?;
+    }
+    Ok(id)
+}
+
+#[tauri::command]
+async fn playlist_rename(state: State<'_, AppState>, id: i64, name: String) -> Res<()> {
+    state.library.lock().unwrap().rename_playlist(id, &name).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn playlist_delete(state: State<'_, AppState>, id: i64) -> Res<()> {
+    state.library.lock().unwrap().delete_playlist(id).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn playlist_items(state: State<'_, AppState>, id: i64) -> Res<Vec<QueueItem>> {
+    state.library.lock().unwrap().playlist_items(id).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn playlist_set_items(state: State<'_, AppState>, id: i64, items: Vec<QueueItem>) -> Res<()> {
+    state.library.lock().unwrap().set_playlist_items(id, &items).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn playlist_add(state: State<'_, AppState>, id: i64, items: Vec<QueueItem>) -> Res<()> {
+    state.library.lock().unwrap().add_to_playlist(id, &items).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn playlist_export(state: State<'_, AppState>, id: i64, path: String) -> Res<usize> {
+    state.library.lock().unwrap().export_m3u(id, std::path::Path::new(&path)).map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn playlist_import(state: State<'_, AppState>, path: String) -> Res<i64> {
+    state.library.lock().unwrap().import_m3u(std::path::Path::new(&path)).map_err(anyhow_err)
 }
 
 #[tauri::command]
@@ -96,30 +236,24 @@ async fn library_folders(state: State<'_, AppState>) -> Res<Vec<String>> {
 }
 
 #[tauri::command]
-async fn library_add_folder(state: State<'_, AppState>, path: String) -> Res<String> {
-    state.library.lock().unwrap().add_folder(std::path::Path::new(&path)).map_err(anyhow_err)
+async fn library_add_folder(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Res<String> {
+    let added = state.library.lock().unwrap().add_folder(std::path::Path::new(&path)).map_err(anyhow_err)?;
+    background::watch_library(&app);
+    Ok(added)
 }
 
 #[tauri::command]
-async fn library_remove_folder(state: State<'_, AppState>, path: String) -> Res<usize> {
-    state.library.lock().unwrap().remove_folder(&path).map_err(anyhow_err)
-}
-
-#[derive(Clone, Serialize)]
-struct ScanProgress {
-    done: usize,
-    total: usize,
+async fn library_remove_folder(app: tauri::AppHandle, state: State<'_, AppState>, path: String) -> Res<usize> {
+    let n = state.library.lock().unwrap().remove_folder(&path).map_err(anyhow_err)?;
+    background::watch_library(&app);
+    Ok(n)
 }
 
 #[tauri::command]
 async fn library_scan(app: tauri::AppHandle, full: bool) -> Res<ScanReport> {
+    // A separate connection, so browsing stays responsive during the scan.
     blocking(move || {
-        // A separate connection, so browsing stays responsive during the scan.
-        let mut lib = Library::open_default().map_err(anyhow_err)?;
-        lib.scan(full, |done, total| {
-            let _ = app.emit("scan-progress", ScanProgress { done, total });
-        })
-        .map_err(anyhow_err)
+        background::scan_now(&app, full).ok_or_else(|| "A library scan is already running; try again in a moment.".into())
     })
     .await
 }
@@ -201,7 +335,7 @@ pub(crate) fn library_items(lib: &Library, album_id: i64) -> anyhow::Result<Vec<
         .album_tracks(album_id)?
         .into_iter()
         .map(|t| QueueItem {
-            media: Media::File { path: t.path },
+            media: t.media(),
             title: t.title,
             artist: t.artist.or_else(|| Some(album.artist.clone())),
             album: Some(album.title.clone()),
@@ -423,7 +557,10 @@ pub fn run() {
             if let Err(e) = desktop::create_tray(app.handle(), player.clone()) {
                 eprintln!("tray icon: {e}");
             }
-            desktop::start_media_controls(app.handle(), player);
+            desktop::start_media_controls(app.handle(), player.clone());
+            background::start_history(app.handle(), player);
+            background::watch_library(app.handle());
+            background::start_periodic_scan(app.handle());
             desktop::set_global_hotkeys(app.handle(), desktop_settings.global_hotkeys);
             if std::env::args().any(|a| a == "--minimized")
                 && let Some(w) = app.get_webview_window("main")
@@ -481,6 +618,29 @@ pub fn run() {
             remote_set_enabled,
             remote_new_pin,
             set_desktop,
+            library_composers,
+            library_composer_albums,
+            library_facets,
+            library_browse,
+            library_versions,
+            library_health,
+            set_album_favorite,
+            set_track_favorite,
+            set_track_rating,
+            library_favorites,
+            library_history,
+            library_listening,
+            clear_history,
+            queue_items_for_tracks,
+            playlists,
+            playlist_create,
+            playlist_rename,
+            playlist_delete,
+            playlist_items,
+            playlist_set_items,
+            playlist_add,
+            playlist_export,
+            playlist_import,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app")

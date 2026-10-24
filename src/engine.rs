@@ -254,16 +254,36 @@ impl Playback {
 
 /// Play a single file (no queue).
 pub fn play(path: &Path, opts: &PlayOptions) -> Result<Playback> {
-    start(0, &Media::File { path: path.to_path_buf() }, 0.0, opts, Box::new(|_| None))
+    start(0, &Media::file(path), 0.0, opts, Box::new(|_| None))
 }
 
 /// Start playing `media` (queue position `index`) from `start_secs`.
 /// `next` supplies the following tracks for gapless playback.
-pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, next: NextFn) -> Result<Playback> {
+/// An opened track: the source positioned at its start, how long it lasts,
+/// and (for cue-sheet ranges) how many seconds to play before stopping.
+struct OpenTrack {
+    source: Source,
+    duration: Option<f64>,
+    limit: Option<f64>,
+}
+
+fn open_track(media: &Media, offset: f64) -> Result<OpenTrack> {
     let mut source = Source::open_media(media)?;
-    if start_secs > 0.0 {
-        source.seek(start_secs)?;
+    let (start, end) = media.range();
+    let begin = start + offset.max(0.0);
+    if begin > 0.0 {
+        source.seek(begin)?;
     }
+    let total = source.duration_secs();
+    let duration = match end {
+        Some(e) => Some(e - start),
+        None => total.map(|t| (t - start).max(0.0)),
+    };
+    Ok(OpenTrack { source, duration, limit: end.map(|e| (e - begin).max(0.0)) })
+}
+
+pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, next: NextFn) -> Result<Playback> {
+    let OpenTrack { source, duration, limit } = open_track(media, start_secs)?;
     let format = source.format();
     let source_label = format!("{} · {format}", source.codec_name());
 
@@ -291,15 +311,12 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
                     fallbacks,
                 };
                 let shared = Arc::new(Shared::default());
-                shared.boundaries.lock().unwrap().push(Boundary {
-                    start_frame: 0,
-                    index,
-                    duration: source.duration_secs(),
-                });
+                shared.boundaries.lock().unwrap().push(Boundary { start_frame: 0, index, duration });
                 let (prod_ctrl, prod_shared) = (ctrl.clone(), shared.clone());
+                let first = OpenTrack { source, duration, limit };
                 let producer = thread::Builder::new()
                     .name("decoder".into())
-                    .spawn(move || produce(source, index, plan, producer, prod_ctrl, next, prod_shared))?;
+                    .spawn(move || produce(first, index, plan, producer, prod_ctrl, next, prod_shared))?;
                 return Ok(Playback {
                     ctrl,
                     output,
@@ -323,7 +340,7 @@ struct Converters {
 }
 
 fn produce(
-    mut source: Source,
+    mut track: OpenTrack,
     mut index: usize,
     plan: Plan,
     mut prod: Producer<i32>,
@@ -341,10 +358,11 @@ fn produce(
     };
     let mut pushed: u64 = 0;
     loop {
-        if !pump(&mut source, plan, &mut prod, &ctrl, &mut conv, &mut pushed)? {
+        let limit = track.limit.map(|secs| (secs * plan.frame_rate()).round() as u64);
+        if !pump(&mut track.source, plan, &mut prod, &ctrl, &mut conv, &mut pushed, limit)? {
             return Ok(()); // stopped
         }
-        if matches!(source, Source::Live(_)) {
+        if matches!(track.source, Source::Live(_)) {
             // Spotify manages its own queue; the live stream just ended.
             return Ok(());
         }
@@ -354,14 +372,14 @@ fn produce(
                 finish(plan, &mut prod, &ctrl, &mut conv);
                 return Ok(());
             };
-            match Source::open_media(&media) {
-                Ok(s) if s.format() == source.format() => {
+            match open_track(&media, 0.0) {
+                Ok(t) if t.source.format() == track.source.format() => {
                     shared.boundaries.lock().unwrap().push(Boundary {
                         start_frame: pushed,
                         index: next_index,
-                        duration: s.duration_secs(),
+                        duration: t.duration,
                     });
-                    source = s;
+                    track = t;
                     index = next_index;
                     break;
                 }
@@ -380,7 +398,8 @@ fn produce(
     // Dropping the producer tells the output that the stream has ended.
 }
 
-/// Decode `source` to the end into the ring. Returns false if stopped.
+/// Decode `source` to its end (or `limit` ring frames, for cue ranges) into
+/// the ring. Returns false if stopped.
 fn pump(
     source: &mut Source,
     plan: Plan,
@@ -388,9 +407,29 @@ fn pump(
     ctrl: &Control,
     conv: &mut Converters,
     pushed: &mut u64,
+    limit: Option<u64>,
 ) -> Result<bool> {
     let channels = plan.channels() as u64;
     let mut out: Vec<i32> = Vec::new();
+    let mut played: u64 = 0;
+    // Trim the block at the range end; true when the range is complete.
+    let mut clip = |out: &mut Vec<i32>| -> bool {
+        let frames = out.len() as u64 / channels;
+        match limit {
+            Some(l) if played + frames >= l => {
+                out.truncate(((l - played) * channels) as usize);
+                played = l;
+                true
+            }
+            _ => {
+                played += frames;
+                false
+            }
+        }
+    };
+    if limit == Some(0) {
+        return Ok(true);
+    }
     match source {
         Source::Live(s) => {
             while s.read(&mut out, &|| ctrl.stopped())? {
@@ -403,10 +442,14 @@ fn pump(
         }
         Source::Pcm(s) => {
             while s.read(&mut out)? {
+                let done = clip(&mut out);
                 if !push_all(prod, &out, ctrl) {
                     return Ok(false);
                 }
                 *pushed += out.len() as u64 / channels;
+                if done {
+                    break;
+                }
             }
         }
         Source::Dsd(s) => {
@@ -419,10 +462,14 @@ fn pump(
                     Plan::ToPcm { .. } => conv.to_pcm.as_mut().unwrap().process(&bytes, &mut out),
                     Plan::Pcm { .. } => unreachable!(),
                 }
+                let done = clip(&mut out);
                 if !push_all(prod, &out, ctrl) {
                     return Ok(false);
                 }
                 *pushed += out.len() as u64 / channels;
+                if done {
+                    break;
+                }
             }
         }
     }

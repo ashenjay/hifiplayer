@@ -12,10 +12,17 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 /// Something playable: a local file or a track on a streaming service.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Media {
-    File { path: PathBuf },
+    /// A file, or a time range of it (a track from a cue sheet).
+    File {
+        path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end: Option<f64>,
+    },
     Stream { service: String, id: String },
     /// Live audio from the Spotify Connect receiver.
     Spotify,
@@ -39,6 +46,20 @@ static RESOLVER: RwLock<Option<Arc<dyn StreamResolver>>> = RwLock::new(None);
 
 pub fn set_stream_resolver(resolver: Arc<dyn StreamResolver>) {
     *RESOLVER.write().unwrap() = Some(resolver);
+}
+
+impl Media {
+    pub fn file(path: impl Into<PathBuf>) -> Media {
+        Media::File { path: path.into(), start: None, end: None }
+    }
+
+    /// The (start, end) range within the file, for cue-sheet tracks.
+    pub fn range(&self) -> (f64, Option<f64>) {
+        match self {
+            Media::File { start, end, .. } => (start.unwrap_or(0.0), *end),
+            _ => (0.0, None),
+        }
+    }
 }
 
 /// The native format of a source, before any processing.
@@ -101,7 +122,7 @@ impl Source {
 
     pub fn open_media(media: &Media) -> Result<Source> {
         match media {
-            Media::File { path } => Self::open(path),
+            Media::File { path, .. } => Self::open(path),
             Media::Stream { service, id } => {
                 let resolver = RESOLVER.read().unwrap().clone().ok_or_else(|| anyhow!("streaming is not set up"))?;
                 let stream = resolver.resolve(service, id)?;

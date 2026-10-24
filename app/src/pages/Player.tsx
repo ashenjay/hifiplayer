@@ -5,7 +5,7 @@ import { SignalPathView } from '../components/SignalPathView'
 import { useNav } from '../nav'
 
 export function QueuePage() {
-  const { player } = useNav()
+  const { player, addToPlaylist } = useNav()
   const queue = player?.queue ?? []
   const current = player?.index ?? -1
   const remaining = queue.slice(current + 1).reduce((s, q) => s + (q.duration ?? 0), 0)
@@ -14,6 +14,7 @@ export function QueuePage() {
       <div className="page-head">
         <h1>Queue <span className="count">{queue.length} tracks{remaining ? ` · ${clock(remaining)} left` : ''}</span></h1>
         <div className="toolbar">
+          {queue.length > 0 && <button onClick={() => addToPlaylist(queue)}>Save as playlist…</button>}
           {queue.length > 0 && <button onClick={() => api.command({ type: 'clearQueue' })}>Clear queue</button>}
         </div>
       </div>

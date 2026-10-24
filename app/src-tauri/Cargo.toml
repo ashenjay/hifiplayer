@@ -14,6 +14,7 @@ tauri-build = { version = "2.7.4", features = [] }
 [dependencies]
 anyhow = "1.0"
 hifiplayer = { path = "../.." }
+notify-debouncer-mini = "0.7.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 souvlaki = "0.8.3"

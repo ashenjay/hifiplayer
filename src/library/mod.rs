@@ -3,8 +3,15 @@
 //!
 //! Stored in %LOCALAPPDATA%\hifiplayer (library.db and art\).
 
+mod cue;
+mod extras;
 mod id3;
+mod migrate;
 mod scan;
+mod search;
+
+pub use extras::{HistoryEntry, ListeningStats, Playlist};
+pub use search::{Facets, HealthReport, SmartSearch};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -73,12 +80,21 @@ pub struct Album {
     pub duration: f64,
     /// Best quality on the album, e.g. "FLAC 24/192" or "DSF DSD128".
     pub quality: String,
+    pub favorite: bool,
+    /// "album", "live", "compilation", "ep", "single" or "soundtrack".
+    pub release_type: Option<String>,
+    pub genre: Option<String>,
+    /// Unix time the album first appeared in the library.
+    pub added: Option<i64>,
+    /// Other editions of the same album in the library (remasters, SACD, …).
+    pub other_versions: u32,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
     pub id: i64,
+    /// For cue-sheet tracks this ends in `#NN`; use `media()` to play it.
     pub path: PathBuf,
     pub title: String,
     pub artist: Option<String>,
@@ -88,6 +104,47 @@ pub struct Track {
     pub disc_no: Option<u32>,
     pub duration: f64,
     pub quality: String,
+    pub composer: Option<String>,
+    pub conductor: Option<String>,
+    pub rating: u8,
+    pub favorite: bool,
+    pub play_count: u32,
+    pub cue_start: Option<f64>,
+    pub cue_end: Option<f64>,
+}
+
+impl Track {
+    /// What to hand to the player (a time range of the file for cue tracks).
+    pub fn media(&self) -> crate::source::Media {
+        match self.cue_start {
+            Some(start) => {
+                let s = self.path.to_string_lossy();
+                let file = s.rsplit_once('#').map(|(f, _)| f.to_string()).unwrap_or_else(|| s.to_string());
+                crate::source::Media::File { path: PathBuf::from(file), start: Some(start), end: self.cue_end }
+            }
+            None => crate::source::Media::file(self.path.clone()),
+        }
+    }
+}
+
+/// A file (or cue-sheet track) found while scanning.
+struct Item {
+    root: String,
+    /// Database key: the file path, or `path#NN` for cue tracks.
+    key: String,
+    file: PathBuf,
+    folder: String,
+    mtime: i64,
+    size: i64,
+    cue: Option<CueInfo>,
+}
+
+struct CueInfo {
+    track: cue::CueTrack,
+    album: Option<String>,
+    album_artist: Option<String>,
+    genre: Option<String>,
+    year: Option<u32>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -154,6 +211,7 @@ impl Library {
         std::fs::create_dir_all(&art_dir).with_context(|| format!("cannot create {}", art_dir.display()))?;
         let conn = Connection::open(dir.join("library.db"))?;
         conn.execute_batch(SCHEMA)?;
+        migrate::migrate(&conn)?;
         Ok(Self { conn, art_dir })
     }
 
@@ -200,20 +258,74 @@ impl Library {
     pub fn scan(&mut self, full: bool, progress: impl Fn(usize, usize) + Sync) -> Result<ScanReport> {
         let started = Instant::now();
         let mut report = ScanReport::default();
+        // After a database upgrade, tags are read again once (new fields).
+        let forced: bool = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = 'needs_full_rescan'", [], |r| r.get::<_, String>(0))
+            .optional()?
+            .is_some_and(|v| v == "1");
+        let full = full || forced;
 
-        let mut found: Vec<(String, scan::FoundFile)> = Vec::new();
+        let mut files: Vec<(String, scan::FoundFile)> = Vec::new();
         let mut scanned_roots = Vec::new();
         for root in self.folders()? {
             if !Path::new(&root).is_dir() {
                 report.unavailable.push(root);
                 continue;
             }
-            let mut files = Vec::new();
-            scan::walk(Path::new(&root), &mut files);
-            found.extend(files.into_iter().map(|f| (root.clone(), f)));
+            let mut found = Vec::new();
+            scan::walk(Path::new(&root), &mut found);
+            files.extend(found.into_iter().map(|f| (root.clone(), f)));
             scanned_roots.push(root);
         }
-        report.found = found.len();
+
+        // Cue sheets turn one album-length file into several tracks; that file
+        // is then not listed on its own.
+        let audio_stamp: HashMap<String, (i64, i64)> = files
+            .iter()
+            .filter(|(_, f)| !f.cue)
+            .map(|(_, f)| (clean_path(&f.path).to_lowercase(), (f.mtime, f.size)))
+            .collect();
+        let mut items: Vec<Item> = Vec::new();
+        let mut covered: HashSet<String> = HashSet::new();
+        for (root, f) in files.iter().filter(|(_, f)| f.cue) {
+            let Some(sheet) = cue::parse(&f.path) else { continue };
+            for t in &sheet.tracks {
+                let audio_key = clean_path(&t.file).to_lowercase();
+                let Some(&(mtime, size)) = audio_stamp.get(&audio_key) else { continue };
+                covered.insert(audio_key);
+                items.push(Item {
+                    root: root.clone(),
+                    key: format!("{}#{:02}", clean_path(&t.file), t.number),
+                    file: t.file.clone(),
+                    folder: f.path.parent().map(clean_path).unwrap_or_default(),
+                    mtime: mtime.max(f.mtime),
+                    size,
+                    cue: Some(CueInfo {
+                        track: t.clone(),
+                        album: sheet.album.clone(),
+                        album_artist: sheet.performer.clone(),
+                        genre: sheet.genre.clone(),
+                        year: sheet.year,
+                    }),
+                });
+            }
+        }
+        for (root, f) in files.iter().filter(|(_, f)| !f.cue) {
+            if covered.contains(&clean_path(&f.path).to_lowercase()) {
+                continue;
+            }
+            items.push(Item {
+                root: root.clone(),
+                key: clean_path(&f.path),
+                file: f.path.clone(),
+                folder: f.path.parent().map(clean_path).unwrap_or_default(),
+                mtime: f.mtime,
+                size: f.size,
+                cue: None,
+            });
+        }
+        report.found = items.len();
 
         let mut known: HashMap<String, (i64, i64)> = HashMap::new();
         {
@@ -234,30 +346,60 @@ impl Library {
             }
         }
 
-        let to_read: Vec<&(String, scan::FoundFile)> = found
+        let to_read: Vec<&Item> = items
             .iter()
-            .filter(|(_, f)| {
-                let p = clean_path(&f.path);
-                let stamp = Some(&(f.mtime, f.size));
-                if !full && unreadable.get(&p) == stamp {
+            .filter(|it| {
+                let stamp = Some(&(it.mtime, it.size));
+                if !full && unreadable.get(&it.key) == stamp {
                     report.still_unreadable += 1;
                     return false;
                 }
-                full || known.get(&p) != stamp
+                full || known.get(&it.key) != stamp
             })
             .collect();
+
+        // One tag read per audio file, shared by all cue tracks inside it.
+        let audio_cache: std::sync::Mutex<HashMap<PathBuf, std::result::Result<scan::TrackMeta, String>>> =
+            Default::default();
+        let read = |it: &Item| -> Result<scan::TrackMeta> {
+            let Some(c) = &it.cue else { return scan::read_meta(&it.file) };
+            let cached = audio_cache.lock().unwrap().get(&it.file).cloned();
+            let base = match cached {
+                Some(b) => b,
+                None => {
+                    let b = scan::read_meta(&it.file).map_err(|e| format!("{e:#}"));
+                    audio_cache.lock().unwrap().insert(it.file.clone(), b.clone());
+                    b
+                }
+            }
+            .map_err(anyhow::Error::msg)?;
+            let end = c.track.end.unwrap_or(base.duration);
+            Ok(scan::TrackMeta {
+                title: c.track.title.clone().unwrap_or_else(|| format!("Track {:02}", c.track.number)),
+                artist: c.track.performer.clone().or(c.album_artist.clone()).or(base.artist.clone()),
+                album_artist: c.album_artist.clone().or(base.album_artist.clone()),
+                album: c.album.clone().or(base.album.clone()),
+                track_no: Some(c.track.number),
+                disc_no: base.disc_no,
+                year: c.year.or(base.year),
+                genre: c.genre.clone().or(base.genre.clone()),
+                composer: c.track.composer.clone().or(base.composer.clone()),
+                duration: (end - c.track.start).max(0.0),
+                ..base
+            })
+        };
 
         let total = to_read.len();
         let done = std::sync::atomic::AtomicUsize::new(0);
         let results: Vec<_> = to_read
             .par_iter()
-            .map(|(root, f)| {
-                let r = scan::read_meta(&f.path);
+            .map(|it| {
+                let r = read(it);
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if n % 25 == 0 || n == total {
                     progress(n, total);
                 }
-                (root, f, r)
+                (*it, r)
             })
             .collect();
 
@@ -265,28 +407,33 @@ impl Library {
         {
             let mut upsert = tx.prepare(
                 "INSERT INTO tracks (path, root, folder, mtime, size, title, artist, album_artist, album,
-                     track_no, disc_no, year, genre, duration, format, sample_rate, bits, channels, is_dsd)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                     track_no, disc_no, year, genre, duration, format, sample_rate, bits, channels, is_dsd,
+                     composer, conductor, cue_start, cue_end)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
+                     ?20, ?21, ?22, ?23)
                  ON CONFLICT(path) DO UPDATE SET root = excluded.root, folder = excluded.folder,
                      mtime = excluded.mtime, size = excluded.size, title = excluded.title,
                      artist = excluded.artist, album_artist = excluded.album_artist, album = excluded.album,
                      track_no = excluded.track_no, disc_no = excluded.disc_no, year = excluded.year,
                      genre = excluded.genre, duration = excluded.duration, format = excluded.format,
                      sample_rate = excluded.sample_rate, bits = excluded.bits, channels = excluded.channels,
-                     is_dsd = excluded.is_dsd",
+                     is_dsd = excluded.is_dsd, composer = excluded.composer, conductor = excluded.conductor,
+                     cue_start = excluded.cue_start, cue_end = excluded.cue_end",
             )?;
-            for (root, f, r) in results {
-                let path = clean_path(&f.path);
+            for (it, r) in results {
                 match r {
                     Ok(m) => {
-                        let folder = f.path.parent().map(clean_path).unwrap_or_default();
+                        let (cue_start, cue_end) = match &it.cue {
+                            Some(c) => (Some(c.track.start), c.track.end),
+                            None => (None, None),
+                        };
                         upsert.execute(params![
-                            path, root, folder, f.mtime, f.size, m.title, m.artist, m.album_artist, m.album,
-                            m.track_no, m.disc_no, m.year, m.genre, m.duration, m.format, m.sample_rate,
-                            m.bits, m.channels, m.is_dsd
+                            it.key, it.root, it.folder, it.mtime, it.size, m.title, m.artist, m.album_artist,
+                            m.album, m.track_no, m.disc_no, m.year, m.genre, m.duration, m.format, m.sample_rate,
+                            m.bits, m.channels, m.is_dsd, m.composer, m.conductor, cue_start, cue_end
                         ])?;
-                        tx.execute("DELETE FROM unreadable WHERE path = ?1", [&path])?;
-                        if known.contains_key(&path) {
+                        tx.execute("DELETE FROM unreadable WHERE path = ?1", [&it.key])?;
+                        if known.contains_key(&it.key) {
                             report.updated += 1;
                         } else {
                             report.added += 1;
@@ -296,29 +443,32 @@ impl Library {
                         let err = format!("{e:#}");
                         tx.execute(
                             "INSERT OR REPLACE INTO unreadable(path, mtime, size, error) VALUES (?1, ?2, ?3, ?4)",
-                            params![path, f.mtime, f.size, err],
+                            params![it.key, it.mtime, it.size, err],
                         )?;
-                        report.failed.push((f.path.clone(), err));
+                        report.failed.push((it.file.clone(), err));
                     }
                 }
             }
 
             // Forget files that disappeared, but only under folders that were readable.
-            let present: HashSet<String> = found.iter().map(|(_, f)| clean_path(&f.path)).collect();
+            let present: HashSet<&str> = items.iter().map(|it| it.key.as_str()).collect();
             let mut st = tx.prepare("SELECT id, path, root FROM tracks")?;
             let gone: Vec<i64> = st
                 .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
                 .filter_map(|r| r.ok())
-                .filter(|(_, p, root)| scanned_roots.contains(root) && !present.contains(p))
+                .filter(|(_, p, root)| scanned_roots.contains(root) && !present.contains(p.as_str()))
                 .map(|(id, ..)| id)
                 .collect();
             for id in &gone {
                 tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
             }
             report.removed = gone.len();
-            let stale: Vec<String> = unreadable.keys().filter(|p| !present.contains(*p)).cloned().collect();
+            let stale: Vec<String> = unreadable.keys().filter(|p| !present.contains(p.as_str())).cloned().collect();
             for p in stale {
                 tx.execute("DELETE FROM unreadable WHERE path = ?1", [p])?;
+            }
+            if forced {
+                tx.execute("DELETE FROM meta WHERE key = 'needs_full_rescan'", [])?;
             }
         }
         tx.commit()?;
@@ -411,7 +561,9 @@ impl Library {
         let tx = self.conn.transaction()?;
         let mut album_ids: HashMap<(String, String), i64> = HashMap::new();
         {
-            let mut insert = tx.prepare("INSERT OR IGNORE INTO albums(title, artist) VALUES (?1, ?2)")?;
+            let mut insert = tx.prepare(
+                "INSERT OR IGNORE INTO albums(title, artist, added) VALUES (?1, ?2, CAST(strftime('%s','now') AS INTEGER))",
+            )?;
             let mut lookup =
                 tx.prepare("SELECT id FROM albums WHERE artist = ?1 COLLATE NOCASE AND title = ?2 COLLATE NOCASE")?;
             let mut set = tx.prepare("UPDATE tracks SET album_id = ?1 WHERE id = ?2")?;
@@ -443,6 +595,22 @@ impl Library {
                                        FROM tracks WHERE tracks.album_id = albums.id)",
             [],
         )?;
+        // Most common genre of the album's tracks.
+        tx.execute(
+            "UPDATE albums SET genre = (SELECT genre FROM tracks WHERE tracks.album_id = albums.id AND genre IS NOT NULL
+                                        GROUP BY genre ORDER BY COUNT(*) DESC LIMIT 1)",
+            [],
+        )?;
+        {
+            let rows: Vec<(i64, String, String)> = tx
+                .prepare("SELECT id, title, artist FROM albums")?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut set = tx.prepare("UPDATE albums SET release_type = ?1, version_key = ?2 WHERE id = ?3")?;
+            for (id, title, artist) in rows {
+                set.execute(params![search::release_type(&title, &artist), search::version_key(&title, &artist), id])?;
+            }
+        }
         tx.execute(
             "DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)",
             [],
@@ -486,7 +654,9 @@ impl Library {
 
     const ALBUM_SELECT: &'static str = "
         SELECT a.id, a.title, a.artist, a.year, NULLIF(a.art_path, ''), COUNT(t.id), SUM(t.duration),
-               MAX(t.is_dsd), MAX(t.sample_rate), MAX(t.bits), MIN(t.format)
+               MAX(t.is_dsd), MAX(t.sample_rate), MAX(t.bits), MIN(t.format),
+               a.favorite, a.release_type, a.genre, a.added,
+               (SELECT COUNT(*) FROM albums v WHERE v.version_key = a.version_key AND v.id != a.id)
         FROM albums a JOIN tracks t ON t.album_id = a.id";
 
     fn album_from_row(r: &rusqlite::Row) -> rusqlite::Result<Album> {
@@ -503,6 +673,11 @@ impl Library {
             tracks: r.get(5)?,
             duration: r.get(6)?,
             quality: quality_label(&format, rate, if is_dsd { Some(1) } else { bits }, is_dsd),
+            favorite: r.get(11)?,
+            release_type: r.get(12)?,
+            genre: r.get(13)?,
+            added: r.get(14)?,
+            other_versions: r.get(15)?,
         })
     }
 
@@ -566,10 +741,11 @@ impl Library {
         Ok(self.tracks_where("t.id = ?1", [id])?.into_iter().next())
     }
 
-    fn tracks_where<P: rusqlite::Params>(&self, clause: &str, p: P) -> Result<Vec<Track>> {
+    pub(crate) fn tracks_where<P: rusqlite::Params>(&self, clause: &str, p: P) -> Result<Vec<Track>> {
         let sql = format!(
             "SELECT t.id, t.path, t.title, t.artist, t.album, t.album_id, t.track_no, t.disc_no, t.duration,
-                    t.format, t.sample_rate, t.bits, t.is_dsd
+                    t.format, t.sample_rate, t.bits, t.is_dsd,
+                    t.composer, t.conductor, t.rating, t.favorite, t.play_count, t.cue_start, t.cue_end
              FROM tracks t WHERE {clause}"
         );
         let mut st = self.conn.prepare(&sql)?;
@@ -588,6 +764,13 @@ impl Library {
                     disc_no: r.get(7)?,
                     duration: r.get(8)?,
                     quality: quality_label(&format, r.get(10)?, r.get(11)?, r.get(12)?),
+                    composer: r.get(13)?,
+                    conductor: r.get(14)?,
+                    rating: r.get(15)?,
+                    favorite: r.get(16)?,
+                    play_count: r.get(17)?,
+                    cue_start: r.get(18)?,
+                    cue_end: r.get(19)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -675,9 +858,13 @@ fn split_folder_name(title: &str) -> Option<(String, String)> {
     (!artist.is_empty() && !album.is_empty()).then(|| (artist.to_string(), album))
 }
 
-/// Canonical path text without the `\\?\` prefix that canonicalize adds on Windows.
+/// Canonical path text without the `\\?\` prefix that canonicalize adds on
+/// Windows (`\\?\UNC\server\share` becomes `\\server\share` for NAS folders).
 fn clean_path(p: &Path) -> String {
     let s = p.to_string_lossy();
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}");
+    }
     s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
 }
 

@@ -234,6 +234,34 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .keys td { padding: 5px 10px 5px 0; vertical-align: top; }
 kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; font-family: inherit; font-size: 12px; white-space: nowrap; }
 
+.nav-gap { margin-top: 14px; }
+.heart { background: none; border: none; padding: 0 4px; font-size: 16px; color: var(--muted); line-height: 1; }
+.heart.on, .heart-btn.on { color: #f472b6; }
+.heart:hover:not(:disabled) { background: none; color: #f472b6; }
+.heart-btn { font-size: 18px; padding: 6px 14px; }
+.track-quality { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.star-mini { color: #fbbf24; font-size: 11px; letter-spacing: -1px; }
+.stars button { background: none; border: none; padding: 0 1px; color: #4b4b55; font-size: 16px; }
+.stars button.on { color: #fbbf24; }
+.stars button:hover:not(:disabled) { background: none; color: #fcd34d; }
+.menu-rate { display: flex; align-items: center; gap: 8px; padding: 6px 12px; color: var(--muted); }
+.chip-on { background: var(--accent); border-color: var(--accent); color: white; }
+.chip-on .muted { color: #e9d5ff; }
+.home-stats { margin-bottom: 4px; }
+.history { display: flex; flex-direction: column; }
+.history-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 14px; padding: 8px 10px; border-radius: 6px; }
+.history-row:hover { background: var(--panel); }
+.playlist-list { display: flex; flex-direction: column; gap: 4px; }
+.playlist-row { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+.playlist-row:hover { background: var(--panel); }
+.playlist-icon { width: 44px; height: 44px; border-radius: 6px; background: linear-gradient(135deg, #4c2d82, #2a1640); display: flex; align-items: center; justify-content: center; }
+.playlist-cover { width: 240px; height: 240px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; border-radius: 8px; overflow: hidden; background: var(--panel); flex: none; }
+.playlist-cover .cover { border-radius: 0; }
+.playlist-pick { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
+.playlist-pick button { justify-content: space-between; }
+.drag-list > div[draggable] { cursor: grab; }
+.drag-list .dragging { opacity: 0.4; }
+
 /* ---- Misc ---- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { border-radius: 16px; }

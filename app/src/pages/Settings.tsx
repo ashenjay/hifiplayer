@@ -157,7 +157,7 @@ function AudioSettings() {
 // ---- Library ---------------------------------------------------------------------
 
 function LibrarySettings() {
-  const { toast } = useNav()
+  const { toast, go } = useNav()
   const [folders, , reloadFolders] = useLoad(() => api.folders(), [])
   const [stats, , reloadStats] = useLoad(() => api.stats(), [])
   const [progress, setProgress] = useState<{ done: number; total: number }>()
@@ -229,6 +229,7 @@ function LibrarySettings() {
         <button className="primary" onClick={add} disabled={scanning}>Add folder…</button>
         <button onClick={() => scan(false)} disabled={scanning}>Rescan</button>
         <button onClick={() => scan(true)} disabled={scanning} title="Re-read every file's tags">Full rescan</button>
+        <button onClick={() => go({ name: 'health' })}>Library health…</button>
         {scanning && (
           <span className="muted small">
             {progress ? `Reading tags ${progress.done} / ${progress.total}` : 'Looking for files…'}

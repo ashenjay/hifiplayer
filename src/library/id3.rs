@@ -16,6 +16,8 @@ pub struct Id3 {
     pub disc: Option<u32>,
     pub year: Option<u32>,
     pub genre: Option<String>,
+    pub composer: Option<String>,
+    pub conductor: Option<String>,
     /// Front cover (or first picture): raw image bytes.
     pub picture: Option<Vec<u8>>,
 }
@@ -110,6 +112,8 @@ pub fn parse(data: &[u8]) -> Option<Id3> {
             b"TPE2" => tag.album_artist = text(frame),
             b"TALB" => tag.album = text(frame),
             b"TCON" => tag.genre = text(frame).map(|g| clean_genre(&g)),
+            b"TCOM" => tag.composer = text(frame),
+            b"TPE3" => tag.conductor = text(frame),
             b"TRCK" => tag.track = text(frame).and_then(|t| leading_number(&t)),
             b"TPOS" => tag.disc = text(frame).and_then(|t| leading_number(&t)),
             b"TYER" | b"TDRC" => {

@@ -13,6 +13,10 @@ use crate::source::{SourceFormat, dsdfile::DsdSource};
 pub const AUDIO_EXTS: &[&str] =
     &["flac", "wav", "aif", "aiff", "m4a", "alac", "caf", "mp3", "ogg", "oga", "opus", "mka", "dsf", "dff"];
 
+pub fn is_cue(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("cue"))
+}
+
 pub fn is_audio(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -24,6 +28,8 @@ pub struct FoundFile {
     pub path: PathBuf,
     pub mtime: i64,
     pub size: i64,
+    /// A `.cue` sheet rather than an audio file.
+    pub cue: bool,
 }
 
 /// Recursively list audio files under `dir`, sorted by path.
@@ -36,14 +42,15 @@ pub fn walk(dir: &Path, out: &mut Vec<FoundFile>) {
         let Ok(meta) = e.metadata() else { continue };
         if meta.is_dir() {
             walk(&path, out);
-        } else if is_audio(&path) {
+        } else if is_audio(&path) || is_cue(&path) {
             let mtime = meta
                 .modified()
                 .ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            out.push(FoundFile { path, mtime, size: meta.len() as i64 });
+            let cue = is_cue(&path);
+            out.push(FoundFile { path, mtime, size: meta.len() as i64, cue });
         }
     }
 }
@@ -59,6 +66,8 @@ pub struct TrackMeta {
     pub disc_no: Option<u32>,
     pub year: Option<u32>,
     pub genre: Option<String>,
+    pub composer: Option<String>,
+    pub conductor: Option<String>,
     pub duration: f64,
     pub format: String,
     pub sample_rate: u32,
@@ -103,6 +112,8 @@ fn read_pcm(path: &Path) -> Result<TrackMeta> {
         m.artist = s(tag.artist());
         m.album = s(tag.album());
         m.genre = s(tag.genre());
+        m.composer = tag.get_string(ItemKey::Composer).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
+        m.conductor = tag.get_string(ItemKey::Conductor).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
         m.album_artist = tag.get_string(ItemKey::AlbumArtist).map(str::trim).filter(|s| !s.is_empty()).map(String::from);
         m.track_no = tag.track();
         m.disc_no = tag.disk();
@@ -133,6 +144,8 @@ fn read_dsd(path: &Path) -> Result<TrackMeta> {
         m.disc_no = t.disc;
         m.year = t.year;
         m.genre = t.genre;
+        m.composer = t.composer;
+        m.conductor = t.conductor;
     }
     Ok(m)
 }

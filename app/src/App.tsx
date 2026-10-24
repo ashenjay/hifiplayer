@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, listen, type PlayerState } from './api'
+import { api, listen, type PlayerState, type QueueItem } from './api'
 import { Icon } from './components/common'
 import { NowPlayingBar, nextRepeat } from './components/NowPlayingBar'
 import { NavContext, type View } from './nav'
+import {
+  AddToPlaylistDialog, BrowsePage, ComposerPage, FavoritesPage, HealthPage, HomePage, PlaylistPage, PlaylistsPage,
+} from './pages/Collection'
 import { AlbumPage, AlbumsPage, ArtistPage, ArtistsPage, SearchPage } from './pages/Library'
 import { NowPlayingPage, QueuePage } from './pages/Player'
 import { SettingsPage } from './pages/Settings'
@@ -11,6 +14,13 @@ import { ServicePage, StreamAlbumPage, StreamArtistPage } from './pages/Streamin
 
 function Page({ view }: { view: View }) {
   switch (view.name) {
+    case 'home': return <HomePage />
+    case 'browse': return <BrowsePage />
+    case 'playlists': return <PlaylistsPage />
+    case 'playlist': return <PlaylistPage id={view.id} />
+    case 'favorites': return <FavoritesPage />
+    case 'composer': return <ComposerPage composer={view.composer} />
+    case 'health': return <HealthPage />
     case 'albums': return <AlbumsPage />
     case 'album': return <AlbumPage id={view.id} />
     case 'artists': return <ArtistsPage />
@@ -26,13 +36,17 @@ function Page({ view }: { view: View }) {
   }
 }
 
-const sections: { view: View; label: string; icon: React.ReactNode }[] = [
+const sections: { view: View; label: string; icon: React.ReactNode; gap?: boolean }[] = [
+  { view: { name: 'home' }, label: 'Home', icon: Icon.home },
   { view: { name: 'albums' }, label: 'Albums', icon: Icon.album },
   { view: { name: 'artists' }, label: 'Artists', icon: Icon.artist },
-  { view: { name: 'spotify' }, label: 'Spotify', icon: Icon.cloud },
+  { view: { name: 'browse' }, label: 'Browse', icon: Icon.grid },
+  { view: { name: 'playlists' }, label: 'Playlists', icon: Icon.list },
+  { view: { name: 'favorites' }, label: 'Favourites', icon: Icon.heart },
+  { view: { name: 'spotify' }, label: 'Spotify', icon: Icon.cloud, gap: true },
   { view: { name: 'service', service: 'qobuz' }, label: 'Qobuz', icon: Icon.cloud },
   { view: { name: 'service', service: 'tidal' }, label: 'Tidal', icon: Icon.cloud },
-  { view: { name: 'queue' }, label: 'Queue', icon: Icon.queue },
+  { view: { name: 'queue' }, label: 'Queue', icon: Icon.queue, gap: true },
   { view: { name: 'settings' }, label: 'Settings', icon: Icon.settings },
 ]
 
@@ -75,7 +89,19 @@ function ShortcutHelp({ onClose }: { onClose: () => void }) {
 }
 
 export default function App() {
-  const [stack, setStack] = useState<View[]>([{ name: 'albums' }])
+  const [stack, setStack] = useState<View[]>([{ name: 'home' }])
+  const [libVersion, setLibVersion] = useState(0)
+  const [playlistItems, setPlaylistItems] = useState<QueueItem[] | null>(null)
+
+  // Reload pages when the library changes in the background (watcher, timer).
+  useEffect(() => {
+    const a = listen('library-changed', () => setLibVersion((v) => v + 1))
+    const b = listen('history-changed', () => setLibVersion((v) => v + 1))
+    return () => {
+      a.then((f) => f())
+      b.then((f) => f())
+    }
+  }, [])
   const [player, setPlayer] = useState<PlayerState | null>(null)
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([])
   const [query, setQuery] = useState('')
@@ -147,7 +173,9 @@ export default function App() {
   }, [back, go])
 
   return (
-    <NavContext.Provider value={{ view, go, back, canGoBack: stack.length > 1, player, toast }}>
+    <NavContext.Provider
+      value={{ view, go, back, canGoBack: stack.length > 1, player, toast, libVersion, addToPlaylist: setPlaylistItems }}
+    >
       <div className="app">
         <aside className="sidebar">
           <div className="brand"><span className="brand-dot" /> HiFi Player</div>
@@ -155,7 +183,7 @@ export default function App() {
             {sections.map((s) => (
               <button
                 key={s.label}
-                className={`nav-item${sameSection(s.view, view) ? ' active' : ''}`}
+                className={`nav-item${sameSection(s.view, view) ? ' active' : ''}${s.gap ? ' nav-gap' : ''}`}
                 onClick={() => setStack([s.view])}
               >
                 {s.icon}
@@ -191,6 +219,7 @@ export default function App() {
         <NowPlayingBar />
 
         {showKeys && <ShortcutHelp onClose={() => setShowKeys(false)} />}
+        {playlistItems && <AddToPlaylistDialog items={playlistItems} onClose={() => setPlaylistItems(null)} />}
 
         <div className="toasts">
           {toasts.map((t) => (

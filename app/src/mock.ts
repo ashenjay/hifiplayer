@@ -2,7 +2,7 @@
 
 import type { Album, PlayerState, QueueItem, StreamAlbum, StreamTrack, Track } from './api'
 
-const albums: Album[] = [
+const albums: Omit<Album, 'favorite' | 'otherVersions'>[] = [
   { id: 1, title: 'Hotel California', artist: 'Eagles', year: 1976, tracks: 9, duration: 2611, quality: 'DSF DSD64' },
   { id: 2, title: 'Brothers In Arms', artist: 'Dire Straits', year: 1985, tracks: 9, duration: 3316, quality: 'DSF DSD64' },
   { id: 3, title: 'The Dark Side Of The Moon', artist: 'Pink Floyd', year: 1973, tracks: 10, duration: 2577, quality: 'DSF DSD64' },
@@ -15,7 +15,7 @@ const albums: Album[] = [
   { id: 10, title: 'Solace', artist: 'Sarah McLachlan', year: 1991, tracks: 11, duration: 2894, quality: 'DSF DSD64' },
 ]
 
-const tracks: Track[] = [
+const tracks: Omit<Track, 'rating' | 'favorite' | 'playCount'>[] = [
   'Hotel California', 'New Kid In Town', 'Life In The Fast Lane', 'Wasted Time', 'Wasted Time (Reprise)',
   'Victim Of Love', 'Pretty Maids All In A Row', 'Try And Love Again', 'The Last Resort',
 ].map((title, i) => ({
@@ -50,12 +50,30 @@ const streamTracks: StreamTrack[] = ['So What', 'Freddie Freeloader', 'Blue in G
     duration: 300 + i * 60, trackNo: i + 1, discNo: 1, quality: '24/192', streamable: true }),
 )
 
+const albumsFull = albums.map((a) => ({ ...a, favorite: a.id === 2, releaseType: 'album', genre: 'Rock', added: 1792000000 - a.id * 9000, otherVersions: 0 }))
+const tracksFull = tracks.map((t) => ({ ...t, rating: t.trackNo === 1 ? 5 : 0, favorite: t.trackNo === 2, playCount: 3, composer: null }))
+
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
-  library_albums: () => albums,
-  library_album: (a) => ({ album: albums.find((x) => x.id === a?.id) ?? albums[0], tracks }),
+  library_listening: () => ({
+    totalPlays: 128, hoursListened: 9.4, playsLast30Days: 41,
+    topAlbums: albumsFull.slice(0, 5).map((a, i) => [a, 20 - i]), topTracks: tracksFull.slice(0, 5),
+    topArtists: [['Eagles', 22], ['Dire Straits', 18], ['Norah Jones', 11]],
+    rediscover: albumsFull.slice(5, 8), recentlyAdded: albumsFull.slice(0, 6),
+  }),
+  library_history: () => tracksFull.slice(0, 6).map((t, i) => ({ playedAt: 1792800000 - i * 700, title: t.title, artist: t.artist, album: t.album, albumId: 1 })),
+  library_facets: () => ({ genres: [['Rock', 31], ['Jazz', 12], ['Pop', 20]], decades: [[1970, 12], [1980, 15], [2000, 9], [2020, 6]], releaseTypes: [['album', 50], ['compilation', 8], ['live', 3]] }),
+  library_browse: () => albumsFull,
+  library_versions: () => [],
+  library_favorites: () => ({ albums: albumsFull.filter((a) => a.favorite), tracks: tracksFull.filter((t) => t.favorite || t.rating >= 4) }),
+  library_composers: () => [{ name: 'Johann Sebastian Bach', albums: 2, tracks: 24 }],
+  playlists: () => [{ id: 1, name: 'Late night DSD', tracks: 12, duration: 3100, updated: 0 }, { id: 2, name: 'Test tracks', tracks: 5, duration: 1300, updated: 0 }],
+  playlist_items: () => queue.slice(0, 5),
+  library_health: () => ({ missingArt: albumsFull.slice(0, 2), mixedFormats: [], duplicates: [], untaggedTracks: 4, unknownArtistAlbums: [], unreadable: [['D:\\Music\\DSD\\A1.dff', 'DFF: compressed (DST) files are not supported yet']], unavailableFolders: [] }),
+  library_albums: () => albumsFull,
+  library_album: (a) => ({ album: albumsFull.find((x) => x.id === a?.id) ?? albumsFull[0], tracks: tracksFull }),
   library_artists: () => [...new Set(albums.map((a) => a.artist))].map((name) => ({ name, albums: 1, tracks: 10 })),
   library_artist_albums: (a) => albums.filter((x) => x.artist === a?.name),
-  library_search: () => ({ albums: albums.slice(0, 2), tracks: tracks.slice(0, 3) }),
+  library_search: () => ({ artists: [{ name: 'Dire Straits', albums: 6, tracks: 51 }], composers: [], albums: albumsFull.slice(0, 2), tracks: tracksFull.slice(0, 3) }),
   library_stats: () => ({ folders: 1, albums: 70, artists: 37, tracks: 1465, hours: 103.9, hiResTracks: 817, dsdTracks: 583 }),
   library_folders: () => ['D:\\Music'],
   library_scan: () => ({ found: 1487, added: 0, updated: 0, removed: 0, failed: [], stillUnreadable: 22, unavailable: [], albums: 70, seconds: 0.1 }),

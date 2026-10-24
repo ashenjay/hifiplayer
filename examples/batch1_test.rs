@@ -12,7 +12,7 @@ use hifiplayer::source::Media;
 
 fn item(dir: &Path, name: &str) -> QueueItem {
     QueueItem {
-        media: Media::File { path: dir.join(name) },
+        media: Media::file(dir.join(name)),
         title: name.into(),
         artist: None,
         album: None,

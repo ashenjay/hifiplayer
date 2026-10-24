@@ -34,6 +34,11 @@ export interface Album {
   tracks: number
   duration: number
   quality: string
+  favorite: boolean
+  releaseType?: string | null
+  genre?: string | null
+  added?: number | null
+  otherVersions: number
 }
 
 export interface Track {
@@ -47,6 +52,63 @@ export interface Track {
   discNo?: number | null
   duration: number
   quality: string
+  composer?: string | null
+  conductor?: string | null
+  rating: number
+  favorite: boolean
+  playCount: number
+  cueStart?: number | null
+  cueEnd?: number | null
+}
+
+export interface Playlist {
+  id: number
+  name: string
+  tracks: number
+  duration: number
+  updated: number
+}
+
+export interface HistoryEntry {
+  playedAt: number
+  title: string
+  artist?: string | null
+  album?: string | null
+  albumId?: number | null
+}
+
+export interface ListeningStats {
+  totalPlays: number
+  hoursListened: number
+  playsLast30Days: number
+  topAlbums: [Album, number][]
+  topTracks: Track[]
+  topArtists: [string, number][]
+  rediscover: Album[]
+  recentlyAdded: Album[]
+}
+
+export interface Facets {
+  genres: [string, number][]
+  decades: [number, number][]
+  releaseTypes: [string, number][]
+}
+
+export interface HealthReport {
+  missingArt: Album[]
+  mixedFormats: [Album, string[]][]
+  duplicates: Album[][]
+  untaggedTracks: number
+  unknownArtistAlbums: Album[]
+  unreadable: [string, string][]
+  unavailableFolders: string[]
+}
+
+export interface SmartSearch {
+  artists: Artist[]
+  albums: Album[]
+  tracks: Track[]
+  composers: Artist[]
 }
 
 export interface Artist {
@@ -78,7 +140,7 @@ export interface ScanReport {
 }
 
 export type Media =
-  | { kind: 'file'; path: string }
+  | { kind: 'file'; path: string; start?: number; end?: number }
   | { kind: 'stream'; service: string; id: string }
   | { kind: 'spotify' }
 
@@ -246,7 +308,31 @@ export const api = {
   album: (id: number) => invoke<{ album: Album; tracks: Track[] }>('library_album', { id }),
   artists: () => invoke<Artist[]>('library_artists'),
   artistAlbums: (name: string) => invoke<Album[]>('library_artist_albums', { name }),
-  search: (text: string) => invoke<{ albums: Album[]; tracks: Track[] }>('library_search', { text }),
+  search: (text: string) => invoke<SmartSearch>('library_search', { text }),
+  composers: () => invoke<Artist[]>('library_composers'),
+  composerAlbums: (name: string) => invoke<Album[]>('library_composer_albums', { name }),
+  facets: () => invoke<Facets>('library_facets'),
+  browse: (genre?: string | null, decade?: number | null, releaseType?: string | null) =>
+    invoke<Album[]>('library_browse', { genre: genre ?? null, decade: decade ?? null, releaseType: releaseType ?? null }),
+  versions: (id: number) => invoke<Album[]>('library_versions', { id }),
+  health: () => invoke<HealthReport>('library_health'),
+  setAlbumFavorite: (id: number, on: boolean) => invoke<void>('set_album_favorite', { id, on }),
+  setTrackFavorite: (id: number, on: boolean) => invoke<void>('set_track_favorite', { id, on }),
+  setTrackRating: (id: number, stars: number) => invoke<void>('set_track_rating', { id, stars }),
+  favorites: () => invoke<{ albums: Album[]; tracks: Track[] }>('library_favorites'),
+  history: (limit = 100) => invoke<HistoryEntry[]>('library_history', { limit }),
+  listening: () => invoke<ListeningStats>('library_listening'),
+  clearHistory: () => invoke<void>('clear_history'),
+  itemsForTracks: (ids: number[]) => invoke<QueueItem[]>('queue_items_for_tracks', { ids }),
+  playlists: () => invoke<Playlist[]>('playlists'),
+  playlistCreate: (name: string, items?: QueueItem[]) => invoke<number>('playlist_create', { name, items: items ?? null }),
+  playlistRename: (id: number, name: string) => invoke<void>('playlist_rename', { id, name }),
+  playlistDelete: (id: number) => invoke<void>('playlist_delete', { id }),
+  playlistItems: (id: number) => invoke<QueueItem[]>('playlist_items', { id }),
+  playlistSetItems: (id: number, items: QueueItem[]) => invoke<void>('playlist_set_items', { id, items }),
+  playlistAdd: (id: number, items: QueueItem[]) => invoke<void>('playlist_add', { id, items }),
+  playlistExport: (id: number, path: string) => invoke<number>('playlist_export', { id, path }),
+  playlistImport: (path: string) => invoke<number>('playlist_import', { path }),
   stats: () => invoke<Stats>('library_stats'),
   folders: () => invoke<string[]>('library_folders'),
   addFolder: (path: string) => invoke<string>('library_add_folder', { path }),
@@ -313,9 +399,18 @@ export function clock(secs?: number | null): string {
   return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
 }
 
+/** What to play for a library track (a time range of the file for cue-sheet tracks). */
+export function trackMedia(t: Track): Media {
+  if (t.cueStart != null) {
+    const file = t.path.replace(/#\d+$/, '')
+    return { kind: 'file', path: file, start: t.cueStart, end: t.cueEnd ?? undefined }
+  }
+  return { kind: 'file', path: t.path }
+}
+
 export function trackItems(tracks: Track[], album: Album): QueueItem[] {
   return tracks.map((t) => ({
-    media: { kind: 'file', path: t.path },
+    media: trackMedia(t),
     title: t.title,
     artist: t.artist ?? album.artist,
     album: album.title,
