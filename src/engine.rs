@@ -112,7 +112,23 @@ impl Plan {
     }
 }
 
-fn plans(format: SourceFormat, opts: &PlayOptions) -> Result<Vec<Plan>> {
+/// Playback plans to try, best first, each with the number of source channels.
+/// Multichannel files fall back to their front left/right pair (unchanged) for
+/// stereo devices.
+fn plans(format: SourceFormat, opts: &PlayOptions) -> Result<Vec<(Plan, usize)>> {
+    let src = format.channels();
+    let mut list: Vec<(Plan, usize)> = plans_for(format, opts)?.into_iter().map(|p| (p, src)).collect();
+    if src > 2 {
+        let stereo = match format {
+            SourceFormat::Pcm { rate, bits, .. } => SourceFormat::Pcm { rate, channels: 2, bits },
+            SourceFormat::Dsd { rate, .. } => SourceFormat::Dsd { rate, channels: 2 },
+        };
+        list.extend(plans_for(stereo, opts)?.into_iter().map(|p| (p, src)));
+    }
+    Ok(list)
+}
+
+fn plans_for(format: SourceFormat, opts: &PlayOptions) -> Result<Vec<Plan>> {
     match format {
         SourceFormat::Pcm { rate, channels, bits } => Ok(vec![Plan::Pcm { rate, channels, bits }]),
         SourceFormat::Dsd { rate, channels } => {
@@ -288,7 +304,7 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
     let source_label = format!("{} · {format}", source.codec_name());
 
     let mut fallbacks = Vec::new();
-    for plan in plans(format, opts)? {
+    for (plan, src_ch) in plans(format, opts)? {
         let ctrl = Arc::new(Control::default());
         // One second of audio in the ring buffer; live Spotify audio uses a
         // quarter second so pause and seek in the Spotify app react quickly.
@@ -302,9 +318,14 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
                     Plan::Native { .. } | Plan::Dop { .. } => true,
                     Plan::ToPcm { .. } => false,
                 };
+                let processing = if src_ch != plan.channels() {
+                    format!("{} · front left/right of {src_ch} channels (device has fewer outputs)", plan.processing())
+                } else {
+                    plan.processing()
+                };
                 let path = SignalPath {
                     source: source_label,
-                    processing: plan.processing(),
+                    processing,
                     output: output.info.description.clone(),
                     bit_perfect,
                     kind: plan.kind(),
@@ -316,7 +337,7 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
                 let first = OpenTrack { source, duration, limit };
                 let producer = thread::Builder::new()
                     .name("decoder".into())
-                    .spawn(move || produce(first, index, plan, producer, prod_ctrl, next, prod_shared))?;
+                    .spawn(move || produce(first, index, plan, src_ch, producer, prod_ctrl, next, prod_shared))?;
                 return Ok(Playback {
                     ctrl,
                     output,
@@ -343,6 +364,7 @@ fn produce(
     mut track: OpenTrack,
     mut index: usize,
     plan: Plan,
+    src_ch: usize,
     mut prod: Producer<i32>,
     ctrl: Arc<Control>,
     mut next: NextFn,
@@ -359,7 +381,7 @@ fn produce(
     let mut pushed: u64 = 0;
     loop {
         let limit = track.limit.map(|secs| (secs * plan.frame_rate()).round() as u64);
-        if !pump(&mut track.source, plan, &mut prod, &ctrl, &mut conv, &mut pushed, limit)? {
+        if !pump(&mut track.source, plan, src_ch, &mut prod, &ctrl, &mut conv, &mut pushed, limit)? {
             return Ok(()); // stopped
         }
         if matches!(track.source, Source::Live(_)) {
@@ -403,6 +425,7 @@ fn produce(
 fn pump(
     source: &mut Source,
     plan: Plan,
+    src_ch: usize,
     prod: &mut Producer<i32>,
     ctrl: &Control,
     conv: &mut Converters,
@@ -442,6 +465,7 @@ fn pump(
         }
         Source::Pcm(s) => {
             while s.read(&mut out)? {
+                keep_channels(&mut out, src_ch, channels as usize);
                 let done = clip(&mut out);
                 if !push_all(prod, &out, ctrl) {
                     return Ok(false);
@@ -452,9 +476,18 @@ fn pump(
                 }
             }
         }
-        Source::Dsd(s) => {
+        Source::Dsd(_) | Source::Sacd(_) => {
             let mut bytes = Vec::new();
-            while s.read(&mut bytes)? {
+            loop {
+                let more = match source {
+                    Source::Dsd(s) => s.read(&mut bytes)?,
+                    Source::Sacd(s) => s.read(&mut bytes)?,
+                    _ => unreachable!(),
+                };
+                if !more {
+                    break;
+                }
+                keep_channels(&mut bytes, src_ch, channels as usize);
                 out.clear();
                 match plan {
                     Plan::Native { .. } => out.extend(bytes.iter().map(|&b| b as i32)),
@@ -474,6 +507,21 @@ fn pump(
         }
     }
     Ok(true)
+}
+
+/// Keep the first `keep` of `from` interleaved channels (front left/right of a
+/// multichannel file on a stereo device). The kept samples are unchanged.
+fn keep_channels<T: Copy>(data: &mut Vec<T>, from: usize, keep: usize) {
+    if from <= keep {
+        return;
+    }
+    let frames = data.len() / from;
+    for f in 0..frames {
+        for c in 0..keep {
+            data[f * keep + c] = data[f * from + c];
+        }
+    }
+    data.truncate(frames * keep);
 }
 
 /// End on DSD idle silence (~50 ms) so the DAC fades out without a click.

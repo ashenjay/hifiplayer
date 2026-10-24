@@ -32,7 +32,7 @@ export function Cover({ src, title, size }: { src?: string | null; title: string
 export function QualityBadge({ quality }: { quality?: string | null }) {
   if (!quality) return null
   const q = quality.toUpperCase()
-  const kind = q.includes('DSD') ? 'dsd' : /24\/|32\/|HI-RES/.test(q) ? 'hires' : /MP3|AAC|LOSSY/.test(q) ? 'lossy' : 'cd'
+  const kind = q.includes('MQA') ? 'mqa' : q.includes('DSD') ? 'dsd' : /24\/|32\/|HI-RES/.test(q) ? 'hires' : /MP3|AAC|LOSSY/.test(q) ? 'lossy' : 'cd'
   return <span className={`badge badge-${kind}`}>{quality}</span>
 }
 

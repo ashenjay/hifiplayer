@@ -11,7 +11,77 @@ use super::id3;
 use crate::source::{SourceFormat, dsdfile::DsdSource};
 
 pub const AUDIO_EXTS: &[&str] =
-    &["flac", "wav", "aif", "aiff", "m4a", "alac", "caf", "mp3", "ogg", "oga", "opus", "mka", "dsf", "dff"];
+    &["flac", "wav", "aif", "aiff", "m4a", "alac", "caf", "mp3", "ogg", "oga", "opus", "mka", "dsf", "dff", "iso"];
+
+/// MQA marker in a FLAC file's Vorbis comments (`MQAENCODER` /
+/// `ORIGINALSAMPLERATE`). Returns the original sample rate, or 0 if unknown.
+/// Display only: the file is still played as the plain PCM it contains.
+pub fn flac_mqa(path: &Path) -> Option<u32> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).ok()?;
+    if &magic != b"fLaC" {
+        return None;
+    }
+    loop {
+        let mut h = [0u8; 4];
+        f.read_exact(&mut h).ok()?;
+        let last = h[0] & 0x80 != 0;
+        let kind = h[0] & 0x7F;
+        let len = u32::from_be_bytes([0, h[1], h[2], h[3]]) as usize;
+        if kind == 4 && len < 1 << 20 {
+            let mut block = vec![0u8; len];
+            f.read_exact(&mut block).ok()?;
+            let le = |at: usize| block.get(at..at + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
+            let mut p = 4 + le(0)?;
+            let count = le(p)?;
+            p += 4;
+            let (mut mqa, mut rate) = (false, None);
+            for _ in 0..count {
+                let n = le(p)?;
+                let entry = String::from_utf8_lossy(block.get(p + 4..p + 4 + n)?).into_owned();
+                p += 4 + n;
+                let (k, v) = entry.split_once('=').unwrap_or((&entry, ""));
+                match k.to_ascii_uppercase().as_str() {
+                    "MQAENCODER" | "MQA" => mqa = true,
+                    "ORIGINALSAMPLERATE" | "MQA_ORIGINAL_SAMPLE_RATE" => {
+                        mqa = true;
+                        rate = v.trim().parse().ok();
+                    }
+                    _ => {}
+                }
+            }
+            return mqa.then_some(rate.unwrap_or(0));
+        }
+        if last {
+            return None;
+        }
+        std::io::Seek::seek(&mut f, std::io::SeekFrom::Current(len as i64)).ok()?;
+    }
+}
+
+pub fn is_iso(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("iso"))
+}
+
+/// Audio properties shared by all tracks of an SACD image.
+pub fn sacd_meta(disc: &crate::source::sacd::SacdDisc) -> TrackMeta {
+    TrackMeta {
+        title: String::new(),
+        artist: disc.artist.clone(),
+        album_artist: disc.artist.clone(),
+        album: disc.album.clone(),
+        year: disc.year,
+        duration: disc.total_secs,
+        format: if disc.dst { "SACD (DST)".into() } else { "SACD".into() },
+        sample_rate: 2_822_400,
+        bits: Some(1),
+        channels: disc.channels as u32,
+        is_dsd: true,
+        ..Default::default()
+    }
+}
 
 pub fn is_cue(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("cue"))
@@ -68,6 +138,8 @@ pub struct TrackMeta {
     pub genre: Option<String>,
     pub composer: Option<String>,
     pub conductor: Option<String>,
+    /// MQA original sample rate (0 = unknown); None if not MQA.
+    pub mqa_rate: Option<u32>,
     pub duration: f64,
     pub format: String,
     pub sample_rate: u32,
@@ -80,7 +152,12 @@ pub struct TrackMeta {
 pub fn read_meta(path: &Path) -> Result<TrackMeta> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let mut m = if ext == "dsf" || ext == "dff" { read_dsd(path)? } else { read_pcm(path)? };
-    m.format = ext.to_ascii_uppercase();
+    if ext == "flac" {
+        m.mqa_rate = flac_mqa(path);
+    }
+    if m.format.is_empty() {
+        m.format = ext.to_ascii_uppercase();
+    }
 
     // Fill gaps from the file name, e.g. "03 - So What.flac".
     let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -133,6 +210,7 @@ fn read_dsd(path: &Path) -> Result<TrackMeta> {
         bits: Some(1),
         channels: channels as u32,
         is_dsd: true,
+        format: if src.is_dst() { "DFF (DST)".into() } else { String::new() },
         ..Default::default()
     };
     if let Some(t) = id3::read_dsd_tag(path) {

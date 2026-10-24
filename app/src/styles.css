@@ -262,6 +262,16 @@ kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-w
 .drag-list > div[draggable] { cursor: grab; }
 .drag-list .dragging { opacity: 0.4; }
 
+.gallery-card { max-width: 900px; max-height: 85vh; overflow-y: auto; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; cursor: zoom-in; background: var(--panel-2); }
+.gallery-big { max-width: 92vw; max-height: 92vh; object-fit: contain; border-radius: 6px; box-shadow: 0 30px 80px #000; }
+.extra-files { display: flex; flex-direction: column; gap: 6px; }
+.extra-files button { justify-content: flex-start; }
+.progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin: 8px 0; }
+.progress > div { height: 100%; background: var(--accent); transition: width 0.3s; }
+.badge-mqa { background: #3a1d3a; color: #f0abfc; }
+
 /* ---- Misc ---- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { border-radius: 16px; }

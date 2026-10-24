@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hifiplayer::engine::PlayOptions;
 use hifiplayer::library::{
-    Album, Artist, Facets, HealthReport, HistoryEntry, Library, ListeningStats, Playlist, ScanReport, SmartSearch, Stats,
+    Album, AlbumExtra, Artist, Facets, HealthReport, HistoryEntry, Library, ListeningStats, Playlist, ScanReport, SmartSearch, Stats,
     Track,
 };
 use hifiplayer::output::{self, DeviceInfo};
@@ -115,6 +115,39 @@ async fn library_versions(state: State<'_, AppState>, id: i64) -> Res<Vec<Album>
 #[tauri::command]
 async fn library_health(state: State<'_, AppState>) -> Res<HealthReport> {
     state.library.lock().unwrap().health().map_err(anyhow_err)
+}
+
+#[tauri::command]
+async fn album_extras(state: State<'_, AppState>, id: i64) -> Res<Vec<AlbumExtra>> {
+    state.library.lock().unwrap().album_extras(id).map_err(anyhow_err)
+}
+
+/// Convert a DSD album to FLAC in `out_dir/Artist - Album [FLAC]`, reporting
+/// progress as "convert-progress" events. Returns the folder written.
+#[tauri::command]
+async fn convert_album(app: tauri::AppHandle, state: State<'_, AppState>, id: i64, rate: u32, out_dir: String) -> Res<String> {
+    let (album, tracks) = {
+        let lib = state.library.lock().unwrap();
+        let album = lib.album(id).map_err(anyhow_err)?.ok_or("album not found")?;
+        let tracks: Vec<(QueueItem, Option<u32>)> =
+            lib.album_tracks(id).map_err(anyhow_err)?.iter().map(|t| (lib.queue_item(t), t.track_no)).collect();
+        (album, tracks)
+    };
+    blocking(move || {
+        let folder = hifiplayer::convert::album_folder(std::path::Path::new(&out_dir), &album.artist, &album.title);
+        let total = tracks.len();
+        for (i, (item, n)) in tracks.iter().enumerate() {
+            let _ = app.emit("convert-progress", serde_json::json!({ "done": i, "total": total, "current": item.title }));
+            hifiplayer::convert::convert_track(item, *n, &folder, rate).map_err(anyhow_err)?;
+        }
+        if let Some(art) = &album.art_path {
+            let ext = std::path::Path::new(art).extension().and_then(|e| e.to_str()).unwrap_or("jpg");
+            let _ = std::fs::copy(art, folder.join(format!("cover.{ext}")));
+        }
+        let _ = app.emit("convert-progress", serde_json::json!({ "done": total, "total": total, "current": "" }));
+        Ok(folder.to_string_lossy().into_owned())
+    })
+    .await
 }
 
 // ---- Favourites, ratings, history ------------------------------------------------
@@ -641,6 +674,8 @@ pub fn run() {
             playlist_add,
             playlist_export,
             playlist_import,
+            album_extras,
+            convert_album,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the app")

@@ -21,6 +21,17 @@ pub struct Playlist {
     pub updated: i64,
 }
 
+/// A booklet, scan or artwork file found next to an album.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlbumExtra {
+    pub name: String,
+    pub path: String,
+    /// "pdf", "image" (viewable in the app) or "file" (opened externally, e.g. TIFF).
+    pub kind: String,
+    pub size: u64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryEntry {
@@ -188,6 +199,70 @@ impl Library {
             duration: Some(t.duration),
             quality: Some(t.quality.clone()),
         }
+    }
+
+    // ---- Booklets and artwork ---------------------------------------------------------
+
+    /// PDFs and images in the album's folder(s) and their scan/artwork subfolders.
+    pub fn album_extras(&self, album_id: i64) -> Result<Vec<AlbumExtra>> {
+        let folders: Vec<String> = self
+            .conn
+            .prepare("SELECT DISTINCT folder FROM tracks WHERE album_id = ?1")?
+            .query_map([album_id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for f in &folders {
+            let dir = PathBuf::from(f);
+            // Albums split in CD1/CD2 subfolders keep their scans one level up.
+            if let Some(parent) = dir.parent() {
+                dirs.push(parent.to_path_buf());
+            }
+            dirs.push(dir);
+        }
+        let scan_names = ["scan", "scans", "artwork", "art", "booklet", "covers", "cover", "images", "digital booklet"];
+        let mut out: Vec<AlbumExtra> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut visit = |dir: &Path, depth: u32, out: &mut Vec<AlbumExtra>| -> Vec<PathBuf> {
+            let mut sub = Vec::new();
+            let Ok(entries) = std::fs::read_dir(dir) else { return sub };
+            let mut entries: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+            entries.sort();
+            for p in entries {
+                if p.is_dir() {
+                    let name = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    if depth == 0 && scan_names.iter().any(|s| name.contains(s)) {
+                        sub.push(p);
+                    }
+                    continue;
+                }
+                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                let kind = match ext.as_str() {
+                    "pdf" => "pdf",
+                    "jpg" | "jpeg" | "png" | "webp" | "gif" => "image",
+                    "tif" | "tiff" | "bmp" => "file",
+                    _ => continue,
+                };
+                if seen.insert(p.clone()) {
+                    let size = p.metadata().map(|m| m.len()).unwrap_or(0);
+                    out.push(AlbumExtra {
+                        name: p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                        path: super::clean_path(&p),
+                        kind: kind.into(),
+                        size,
+                    });
+                }
+            }
+            sub
+        };
+        let mut queue: Vec<(PathBuf, u32)> = dirs.into_iter().map(|d| (d, 0)).collect();
+        while let Some((dir, depth)) = queue.pop() {
+            for s in visit(&dir, depth, &mut out) {
+                queue.push((s, depth + 1));
+            }
+        }
+        // Booklets first, then images, then other files.
+        out.sort_by_key(|e| (match e.kind.as_str() { "pdf" => 0, "image" => 1, _ => 2 }, e.name.to_lowercase()));
+        Ok(out)
     }
 
     // ---- Favourites and ratings ----------------------------------------------------

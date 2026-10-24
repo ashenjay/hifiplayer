@@ -3,6 +3,7 @@
 pub mod dsdfile;
 pub mod http;
 pub mod pcm;
+pub mod sacd;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -104,6 +105,7 @@ pub fn dsd_name(rate: u32) -> String {
 pub enum Source {
     Pcm(pcm::PcmSource),
     Dsd(dsdfile::DsdSource),
+    Sacd(sacd::SacdSource),
     Live(crate::spotify::LiveSource),
 }
 
@@ -116,6 +118,7 @@ impl Source {
             .to_ascii_lowercase();
         match ext.as_str() {
             "dsf" | "dff" => Ok(Source::Dsd(dsdfile::DsdSource::open(path)?)),
+            "iso" => Ok(Source::Sacd(sacd::SacdSource::open(path)?)),
             _ => Ok(Source::Pcm(pcm::PcmSource::open(path)?)),
         }
     }
@@ -139,6 +142,7 @@ impl Source {
         match self {
             Source::Pcm(s) => s.seek(secs),
             Source::Dsd(s) => s.seek(secs),
+            Source::Sacd(s) => s.seek(secs),
             // Spotify seeks on its side (see spotify::remote).
             Source::Live(_) => Ok(()),
         }
@@ -148,6 +152,7 @@ impl Source {
         match self {
             Source::Pcm(s) => s.format(),
             Source::Dsd(s) => s.format(),
+            Source::Sacd(s) => s.format(),
             Source::Live(_) => SourceFormat::Pcm { rate: 44_100, channels: 2, bits: 24 },
         }
     }
@@ -157,6 +162,7 @@ impl Source {
         match self {
             Source::Pcm(s) => &s.codec_name,
             Source::Dsd(s) => s.container_name(),
+            Source::Sacd(s) => s.codec_name(),
             Source::Live(_) => "Spotify Ogg Vorbis 320 kbps",
         }
     }
@@ -166,6 +172,7 @@ impl Source {
         match self {
             Source::Pcm(s) => s.duration_secs(),
             Source::Dsd(s) => Some(s.duration_secs()),
+            Source::Sacd(s) => Some(s.duration_secs()),
             Source::Live(_) => None,
         }
     }

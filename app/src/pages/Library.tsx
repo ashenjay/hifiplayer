@@ -4,6 +4,7 @@ import { AlbumGrid } from '../components/AlbumGrid'
 import { Cover, ErrorBox, Icon, Loading, QualityBadge, useLoad } from '../components/common'
 import { TrackList } from '../components/TrackList'
 import { useNav } from '../nav'
+import { AlbumTools } from './AlbumTools'
 import { albumGrid, trackQueueItems, trackRows } from './Collection'
 
 type Sort = 'artist' | 'title' | 'year' | 'recent'
@@ -144,6 +145,7 @@ export function AlbumPage({ id }: { id: number }) {
             <button className={`heart-btn${album.favorite ? ' on' : ''}`} title={album.favorite ? 'Remove from favourites' : 'Add to favourites'} onClick={toggleFav}>
               {album.favorite ? '♥' : '♡'}
             </button>
+            <AlbumTools album={album} />
           </div>
         </div>
       </div>

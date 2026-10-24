@@ -10,7 +10,7 @@ mod migrate;
 mod scan;
 mod search;
 
-pub use extras::{HistoryEntry, ListeningStats, Playlist};
+pub use extras::{AlbumExtra, HistoryEntry, ListeningStats, Playlist};
 pub use search::{Facets, HealthReport, SmartSearch};
 
 use std::collections::{HashMap, HashSet};
@@ -145,6 +145,8 @@ struct CueInfo {
     album_artist: Option<String>,
     genre: Option<String>,
     year: Option<u32>,
+    /// Audio properties when they don't come from reading `file` (SACD images).
+    base: Option<scan::TrackMeta>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -181,6 +183,15 @@ pub struct Stats {
     pub hours: f64,
     pub hi_res_tracks: usize,
     pub dsd_tracks: usize,
+}
+
+/// Append "MQA" (and the original rate, if known) to a quality label.
+fn with_mqa(label: String, mqa_rate: Option<u32>) -> String {
+    match mqa_rate {
+        Some(0) => format!("{label} MQA"),
+        Some(r) => format!("{label} MQA {}", crate::source::khz(r)),
+        None => label,
+    }
 }
 
 pub fn quality_label(format: &str, sample_rate: u32, bits: Option<u32>, is_dsd: bool) -> String {
@@ -307,6 +318,39 @@ impl Library {
                         album_artist: sheet.performer.clone(),
                         genre: sheet.genre.clone(),
                         year: sheet.year,
+                        base: None,
+                    }),
+                });
+            }
+        }
+        // SACD ISO images: one library track per disc track.
+        for (root, f) in files.iter().filter(|(_, f)| !f.cue && scan::is_iso(&f.path)) {
+            covered.insert(clean_path(&f.path).to_lowercase());
+            let Ok(disc) = crate::source::sacd::read_toc(&f.path) else { continue };
+            let base = scan::sacd_meta(&disc);
+            for t in &disc.tracks {
+                items.push(Item {
+                    root: root.clone(),
+                    key: format!("{}#{:02}", clean_path(&f.path), t.number),
+                    file: f.path.clone(),
+                    folder: f.path.parent().map(clean_path).unwrap_or_default(),
+                    mtime: f.mtime,
+                    size: f.size,
+                    cue: Some(CueInfo {
+                        track: cue::CueTrack {
+                            file: f.path.clone(),
+                            number: t.number,
+                            title: t.title.clone(),
+                            performer: t.performer.clone(),
+                            composer: t.composer.clone(),
+                            start: t.start,
+                            end: Some(t.start + t.duration),
+                        },
+                        album: disc.album.clone(),
+                        album_artist: disc.artist.clone(),
+                        genre: None,
+                        year: disc.year,
+                        base: Some(base.clone()),
                     }),
                 });
             }
@@ -363,16 +407,20 @@ impl Library {
             Default::default();
         let read = |it: &Item| -> Result<scan::TrackMeta> {
             let Some(c) = &it.cue else { return scan::read_meta(&it.file) };
-            let cached = audio_cache.lock().unwrap().get(&it.file).cloned();
-            let base = match cached {
-                Some(b) => b,
-                None => {
-                    let b = scan::read_meta(&it.file).map_err(|e| format!("{e:#}"));
-                    audio_cache.lock().unwrap().insert(it.file.clone(), b.clone());
-                    b
+            let base = if let Some(b) = &c.base {
+                b.clone()
+            } else {
+                let cached = audio_cache.lock().unwrap().get(&it.file).cloned();
+                match cached {
+                    Some(b) => b,
+                    None => {
+                        let b = scan::read_meta(&it.file).map_err(|e| format!("{e:#}"));
+                        audio_cache.lock().unwrap().insert(it.file.clone(), b.clone());
+                        b
+                    }
                 }
-            }
-            .map_err(anyhow::Error::msg)?;
+                .map_err(anyhow::Error::msg)?
+            };
             let end = c.track.end.unwrap_or(base.duration);
             Ok(scan::TrackMeta {
                 title: c.track.title.clone().unwrap_or_else(|| format!("Track {:02}", c.track.number)),
@@ -408,9 +456,9 @@ impl Library {
             let mut upsert = tx.prepare(
                 "INSERT INTO tracks (path, root, folder, mtime, size, title, artist, album_artist, album,
                      track_no, disc_no, year, genre, duration, format, sample_rate, bits, channels, is_dsd,
-                     composer, conductor, cue_start, cue_end)
+                     composer, conductor, cue_start, cue_end, mqa_rate)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-                     ?20, ?21, ?22, ?23)
+                     ?20, ?21, ?22, ?23, ?24)
                  ON CONFLICT(path) DO UPDATE SET root = excluded.root, folder = excluded.folder,
                      mtime = excluded.mtime, size = excluded.size, title = excluded.title,
                      artist = excluded.artist, album_artist = excluded.album_artist, album = excluded.album,
@@ -418,7 +466,7 @@ impl Library {
                      genre = excluded.genre, duration = excluded.duration, format = excluded.format,
                      sample_rate = excluded.sample_rate, bits = excluded.bits, channels = excluded.channels,
                      is_dsd = excluded.is_dsd, composer = excluded.composer, conductor = excluded.conductor,
-                     cue_start = excluded.cue_start, cue_end = excluded.cue_end",
+                     cue_start = excluded.cue_start, cue_end = excluded.cue_end, mqa_rate = excluded.mqa_rate",
             )?;
             for (it, r) in results {
                 match r {
@@ -430,7 +478,7 @@ impl Library {
                         upsert.execute(params![
                             it.key, it.root, it.folder, it.mtime, it.size, m.title, m.artist, m.album_artist,
                             m.album, m.track_no, m.disc_no, m.year, m.genre, m.duration, m.format, m.sample_rate,
-                            m.bits, m.channels, m.is_dsd, m.composer, m.conductor, cue_start, cue_end
+                            m.bits, m.channels, m.is_dsd, m.composer, m.conductor, cue_start, cue_end, m.mqa_rate
                         ])?;
                         tx.execute("DELETE FROM unreadable WHERE path = ?1", [&it.key])?;
                         if known.contains_key(&it.key) {
@@ -490,9 +538,12 @@ impl Library {
             album: Option<String>,
             artist: Option<String>,
             album_artist: Option<String>,
+            /// (disc, track) to tell apart two editions of one album.
+            position: (Option<u32>, Option<u32>),
         }
         let rows: Vec<Row> = {
-            let mut st = self.conn.prepare("SELECT id, folder, album, artist, album_artist FROM tracks")?;
+            let mut st =
+                self.conn.prepare("SELECT id, folder, album, artist, album_artist, disc_no, track_no FROM tracks")?;
             st.query_map([], |r| {
                 Ok(Row {
                     id: r.get(0)?,
@@ -500,6 +551,7 @@ impl Library {
                     album: r.get(2)?,
                     artist: r.get(3)?,
                     album_artist: r.get(4)?,
+                    position: (r.get(5)?, r.get(6)?),
                 })
             })?
             .collect::<rusqlite::Result<_>>()?
@@ -558,6 +610,29 @@ impl Library {
             })
             .collect();
 
+        let artist_of = |r: &Row, title: &str| match &r.album_artist {
+            Some(a) => a.clone(),
+            None => folder_artist
+                .get(&(r.folder.clone(), title.to_string()))
+                .cloned()
+                .unwrap_or_else(|| "Unknown Artist".into()),
+        };
+
+        // Two editions of the same album in different folders (e.g. a DSD and a
+        // DST rip) have the same tags: if the same track number shows up in more
+        // than one folder, keep each folder as its own album.
+        let mut seen: HashMap<(String, String), HashMap<(Option<u32>, Option<u32>), HashSet<&str>>> = HashMap::new();
+        for r in rows.iter().filter(|r| r.position.1.is_some()) {
+            let title = title_of(r);
+            let key = (artist_of(r, &title).to_lowercase(), title.to_lowercase());
+            seen.entry(key).or_default().entry(r.position).or_default().insert(r.folder.as_str());
+        }
+        let split: HashSet<(String, String)> = seen
+            .into_iter()
+            .filter(|(_, positions)| positions.values().any(|folders| folders.len() > 1))
+            .map(|(k, _)| k)
+            .collect();
+
         let tx = self.conn.transaction()?;
         let mut album_ids: HashMap<(String, String), i64> = HashMap::new();
         {
@@ -568,14 +643,11 @@ impl Library {
                 tx.prepare("SELECT id FROM albums WHERE artist = ?1 COLLATE NOCASE AND title = ?2 COLLATE NOCASE")?;
             let mut set = tx.prepare("UPDATE tracks SET album_id = ?1 WHERE id = ?2")?;
             for r in &rows {
-                let title = title_of(r);
-                let artist = match &r.album_artist {
-                    Some(a) => a.clone(),
-                    None => folder_artist
-                        .get(&(r.folder.clone(), title.clone()))
-                        .cloned()
-                        .unwrap_or_else(|| "Unknown Artist".into()),
-                };
+                let mut title = title_of(r);
+                let artist = artist_of(r, &title);
+                if split.contains(&(artist.to_lowercase(), title.to_lowercase())) {
+                    title = format!("{title} ({})", folder_title(&r.folder));
+                }
                 let key = (artist.to_lowercase(), title.to_lowercase());
                 let id = match album_ids.get(&key) {
                     Some(id) => *id,
@@ -655,7 +727,7 @@ impl Library {
     const ALBUM_SELECT: &'static str = "
         SELECT a.id, a.title, a.artist, a.year, NULLIF(a.art_path, ''), COUNT(t.id), SUM(t.duration),
                MAX(t.is_dsd), MAX(t.sample_rate), MAX(t.bits), MIN(t.format),
-               a.favorite, a.release_type, a.genre, a.added,
+               a.favorite, a.release_type, a.genre, a.added, MAX(t.mqa_rate),
                (SELECT COUNT(*) FROM albums v WHERE v.version_key = a.version_key AND v.id != a.id)
         FROM albums a JOIN tracks t ON t.album_id = a.id";
 
@@ -672,12 +744,12 @@ impl Library {
             art_path: r.get(4)?,
             tracks: r.get(5)?,
             duration: r.get(6)?,
-            quality: quality_label(&format, rate, if is_dsd { Some(1) } else { bits }, is_dsd),
+            quality: with_mqa(quality_label(&format, rate, if is_dsd { Some(1) } else { bits }, is_dsd), r.get(15)?),
             favorite: r.get(11)?,
             release_type: r.get(12)?,
             genre: r.get(13)?,
             added: r.get(14)?,
-            other_versions: r.get(15)?,
+            other_versions: r.get(16)?,
         })
     }
 
@@ -737,6 +809,12 @@ impl Library {
         Ok((albums, tracks))
     }
 
+    /// Tracks whose path, title or artist contains `text` (for tools and tests).
+    pub fn tracks_matching(&self, text: &str) -> Result<Vec<Track>> {
+        let p = format!("%{text}%");
+        self.tracks_where("t.path LIKE ?1 OR t.title LIKE ?1 OR t.artist LIKE ?1 ORDER BY t.path", [p])
+    }
+
     pub fn track(&self, id: i64) -> Result<Option<Track>> {
         Ok(self.tracks_where("t.id = ?1", [id])?.into_iter().next())
     }
@@ -745,7 +823,7 @@ impl Library {
         let sql = format!(
             "SELECT t.id, t.path, t.title, t.artist, t.album, t.album_id, t.track_no, t.disc_no, t.duration,
                     t.format, t.sample_rate, t.bits, t.is_dsd,
-                    t.composer, t.conductor, t.rating, t.favorite, t.play_count, t.cue_start, t.cue_end
+                    t.composer, t.conductor, t.rating, t.favorite, t.play_count, t.cue_start, t.cue_end, t.mqa_rate
              FROM tracks t WHERE {clause}"
         );
         let mut st = self.conn.prepare(&sql)?;
@@ -763,7 +841,7 @@ impl Library {
                     track_no: r.get(6)?,
                     disc_no: r.get(7)?,
                     duration: r.get(8)?,
-                    quality: quality_label(&format, r.get(10)?, r.get(11)?, r.get(12)?),
+                    quality: with_mqa(quality_label(&format, r.get(10)?, r.get(11)?, r.get(12)?), r.get(20)?),
                     composer: r.get(13)?,
                     conductor: r.get(14)?,
                     rating: r.get(15)?,

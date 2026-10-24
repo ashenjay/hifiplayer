@@ -3,6 +3,7 @@
 //! Input everywhere is byte-interleaved DSD, MSB first (see `source::dsdfile`).
 
 mod dop;
+pub mod dst;
 mod topcm;
 
 pub use dop::DopEncoder;

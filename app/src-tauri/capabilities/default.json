@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "opener:allow-open-url"
+    "dialog:allow-save",
+    "opener:allow-open-url",
+    { "identifier": "opener:allow-open-path", "allow": [{ "path": "**" }] }
   ]
 }

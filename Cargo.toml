@@ -12,6 +12,7 @@ anyhow = "1.0.104"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
 ctrlc = "3.5.2"
+flacenc = "0.5.1"
 futures-util = "0.3.34"
 librespot-connect = "0.8"
 librespot-core = "0.8"

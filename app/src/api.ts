@@ -61,6 +61,14 @@ export interface Track {
   cueEnd?: number | null
 }
 
+export interface AlbumExtra {
+  name: string
+  path: string
+  /** 'pdf' | 'image' | 'file' */
+  kind: string
+  size: number
+}
+
 export interface Playlist {
   id: number
   name: string
@@ -333,6 +341,8 @@ export const api = {
   playlistAdd: (id: number, items: QueueItem[]) => invoke<void>('playlist_add', { id, items }),
   playlistExport: (id: number, path: string) => invoke<number>('playlist_export', { id, path }),
   playlistImport: (path: string) => invoke<number>('playlist_import', { path }),
+  albumExtras: (id: number) => invoke<AlbumExtra[]>('album_extras', { id }),
+  convertAlbum: (id: number, rate: number, outDir: string) => invoke<string>('convert_album', { id, rate, outDir }),
   stats: () => invoke<Stats>('library_stats'),
   folders: () => invoke<string[]>('library_folders'),
   addFolder: (path: string) => invoke<string>('library_add_folder', { path }),

@@ -16,6 +16,8 @@ enum Container {
     Dsf { block_size: usize, lsb_first: bool },
     /// DFF data is already byte-interleaved, MSB first.
     Dff,
+    /// DFF with DST compression: one `DSTF` chunk per 1/75 s frame, up to `chunk_end`.
+    DffDst { chunk_end: u64 },
 }
 
 pub struct DsdSource {
@@ -124,10 +126,8 @@ impl DsdSource {
                             b"CMPR" => {
                                 let mut c = [0u8; 4];
                                 f.read_exact(&mut c)?;
-                                if &c != b"DSD " {
-                                    bail!(
-                                        "DFF: compressed (DST) files are not supported yet"
-                                    );
+                                if &c != b"DSD " && &c != b"DST " {
+                                    bail!("DFF: unknown compression {}", String::from_utf8_lossy(&c));
                                 }
                             }
                             _ => {}
@@ -152,7 +152,41 @@ impl DsdSource {
                         scratch: Vec::new(),
                     });
                 }
-                b"DST " => bail!("DFF: compressed (DST) files are not supported yet"),
+                b"DST " => {
+                    if rate == 0 || channels == 0 {
+                        bail!("DFF: missing sample rate or channel count");
+                    }
+                    let chunk_end = f.stream_position()? + size;
+                    // FRTE (frame count + rate) comes first, then the DSTF frames.
+                    let mut frames = 0u64;
+                    let mut sub = [0u8; 4];
+                    f.read_exact(&mut sub)?;
+                    let sub_size = read_u64_be(&mut f)?;
+                    if &sub == b"FRTE" {
+                        frames = read_u32_be(&mut f)? as u64;
+                        f.seek(SeekFrom::Current(sub_size as i64 - 4 + (sub_size & 1) as i64))?;
+                    } else {
+                        f.seek(SeekFrom::Current(-12))?;
+                    }
+                    let data_start = f.stream_position()?;
+                    let mut src = Self {
+                        file: f,
+                        container: Container::DffDst { chunk_end },
+                        rate,
+                        channels,
+                        total_bytes_per_ch: frames * (crate::dsd::dst::samples_per_frame(rate) / 8) as u64,
+                        read_bytes_per_ch: 0,
+                        data_start,
+                        scratch: Vec::new(),
+                    };
+                    if frames == 0 {
+                        // No frame count: count the DSTF chunks once.
+                        let n = src.skip_dst_frames(u64::MAX)?;
+                        src.total_bytes_per_ch = n * (crate::dsd::dst::samples_per_frame(rate) / 8) as u64;
+                        src.file.seek(SeekFrom::Start(data_start))?;
+                    }
+                    return Ok(src);
+                }
                 _ => {
                     f.seek(SeekFrom::Current(padded as i64))?;
                 }
@@ -168,7 +202,33 @@ impl DsdSource {
         match self.container {
             Container::Dsf { .. } => "DSF",
             Container::Dff => "DFF",
+            Container::DffDst { .. } => "DFF (DST)",
         }
+    }
+
+    pub fn is_dst(&self) -> bool {
+        matches!(self.container, Container::DffDst { .. })
+    }
+
+    /// From the current position, skip up to `n` DSTF frame chunks; returns how many were skipped.
+    fn skip_dst_frames(&mut self, n: u64) -> Result<u64> {
+        let Container::DffDst { chunk_end } = self.container else { return Ok(0) };
+        let mut done = 0;
+        while done < n && self.file.stream_position()? + 12 <= chunk_end {
+            let mut id = [0u8; 4];
+            self.file.read_exact(&mut id)?;
+            let size = read_u64_be(&mut self.file)?;
+            let at = self.file.stream_position()?;
+            if &id == b"DSTF" {
+                if done + 1 > n {
+                    self.file.seek(SeekFrom::Start(at - 12))?;
+                    break;
+                }
+                done += 1;
+            }
+            self.file.seek(SeekFrom::Start(at + size + (size & 1)))?;
+        }
+        Ok(done)
     }
 
     pub fn duration_secs(&self) -> f64 {
@@ -178,7 +238,16 @@ impl DsdSource {
     /// Jump to `secs`. DSF seeks to the start of the containing block (at most ~12 ms early).
     pub fn seek(&mut self, secs: f64) -> Result<()> {
         let byte = ((secs.max(0.0) * self.rate as f64 / 8.0) as u64).min(self.total_bytes_per_ch);
+        if self.is_dst() {
+            // DST frames vary in size: walk the frame chunks (headers only).
+            let frame_bytes = (crate::dsd::dst::samples_per_frame(self.rate) / 8) as u64;
+            self.file.seek(SeekFrom::Start(self.data_start))?;
+            let skipped = self.skip_dst_frames(byte / frame_bytes)?;
+            self.read_bytes_per_ch = skipped * frame_bytes;
+            return Ok(());
+        }
         let (offset, per_ch) = match self.container {
+            Container::DffDst { .. } => unreachable!(),
             Container::Dsf { block_size, .. } => {
                 let block = byte / block_size as u64;
                 (block * block_size as u64 * self.channels as u64, block * block_size as u64)
@@ -231,6 +300,30 @@ impl DsdSource {
                     return Ok(false);
                 }
             }
+            Container::DffDst { chunk_end } => loop {
+                if self.file.stream_position()? + 12 > chunk_end {
+                    self.read_bytes_per_ch = self.total_bytes_per_ch;
+                    return Ok(false);
+                }
+                let mut id = [0u8; 4];
+                self.file.read_exact(&mut id)?;
+                let size = read_u64_be(&mut self.file)?;
+                if &id != b"DSTF" {
+                    self.file.seek(SeekFrom::Current((size + (size & 1)) as i64))?;
+                    continue;
+                }
+                self.scratch.resize(size as usize, 0);
+                self.file.read_exact(&mut self.scratch)?;
+                if size & 1 == 1 {
+                    self.file.seek(SeekFrom::Current(1))?;
+                }
+                let frame = crate::dsd::dst::decode_frame(&self.scratch, self.channels, self.rate)?;
+                let per_ch = (frame.len() / self.channels) as u64;
+                let keep = per_ch.min(remaining) as usize;
+                out.extend_from_slice(&frame[..keep * self.channels]);
+                self.read_bytes_per_ch += keep as u64;
+                break;
+            },
         }
         Ok(true)
     }
