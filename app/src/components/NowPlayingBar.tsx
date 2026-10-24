@@ -4,35 +4,8 @@ import { useNav } from '../nav'
 import { Cover, Icon } from './common'
 import { quality, SignalPathView } from './SignalPathView'
 
-export function Seekbar({ position, duration }: { position: number; duration?: number | null }) {
-  // While dragging, show the drag position instead of the live one.
-  const [drag, setDrag] = useState<number | null>(null)
-  const max = duration && duration > 0 ? duration : 0
-  const value = drag ?? position
-  const commit = () => {
-    if (drag != null) api.command({ type: 'seek', secs: drag })
-    setDrag(null)
-  }
-  return (
-    <div className="seek">
-      <span className="time">{clock(value)}</span>
-      <input
-        type="range"
-        min={0}
-        max={max || 1}
-        step={0.1}
-        value={Math.min(value, max || 1)}
-        disabled={!max}
-        style={{ '--fill': `${max ? (Math.min(value, max) / max) * 100 : 0}%` } as React.CSSProperties}
-        onChange={(e) => setDrag(Number(e.target.value))}
-        onMouseUp={commit}
-        onKeyUp={commit}
-        onTouchEnd={commit}
-      />
-      <span className="time">{clock(duration)}</span>
-    </div>
-  )
-}
+export { Seekbar } from './Seekbar'
+import { Seekbar } from './Seekbar'
 
 export const nextRepeat = (r: Repeat): Repeat => (r === 'off' ? 'all' : r === 'all' ? 'one' : 'off')
 
@@ -196,7 +169,7 @@ export function NowPlayingBar() {
             {player?.repeat === 'one' ? Icon.repeatOne : Icon.repeat}
           </button>
         </div>
-        <Seekbar position={player?.position ?? 0} duration={player?.duration ?? item?.duration} />
+        <Seekbar position={player?.position ?? 0} duration={player?.duration ?? item?.duration} playing={player?.status === 'playing'} />
       </div>
 
       <div className="now-right">

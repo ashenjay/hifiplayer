@@ -11,6 +11,7 @@ import {
 import { useNav } from '../nav'
 import { coverTint, useAppearance, useCoverColors } from '../theme'
 import { Cover, Icon } from './common'
+import { useSmoothPosition } from './Seekbar'
 
 // ---- Lyrics ------------------------------------------------------------------------------
 
@@ -90,7 +91,7 @@ export function TvMode({ onClose }: { onClose: () => void }) {
   }, [onClose])
 
   const dur = player?.duration ?? item?.duration ?? 0
-  const pos = player?.position ?? 0
+  const pos = useSmoothPosition(player?.position ?? 0, player?.status === 'playing', dur)
   return (
     <div className={`tv tinted${idle ? ' idle' : ''}`} style={coverTint(colors)}>
       <button className="icon-btn tv-close" title="Leave TV mode (Esc)" onClick={onClose}>{Icon.close}</button>
@@ -133,7 +134,7 @@ export function MiniPlayer() {
   const item = currentItem(player)
   useAppearance(item?.art)
   const dur = player?.duration ?? item?.duration ?? 0
-  const pos = player?.position ?? 0
+  const pos = useSmoothPosition(player?.position ?? 0, player?.status === 'playing', dur)
   const playing = player?.status === 'playing' || player?.status === 'loading'
   return (
     <div className="mini" data-tauri-drag-region>

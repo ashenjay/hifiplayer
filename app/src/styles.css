@@ -419,3 +419,15 @@ kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-w
 .account-row input { max-width: 320px; }
 .status-ok { color: var(--high); }
 .card h3.sub { margin: 20px 0 4px; }
+
+/* Seek bar: fill and handle share one position */
+.seekbar { position: relative; flex: 1; height: 18px; display: flex; align-items: center; cursor: pointer; touch-action: none; outline: none; }
+.seekbar.disabled { cursor: default; }
+.seek-rail { width: 100%; height: 4px; border-radius: 2px; background: var(--track); overflow: hidden; transition: height 0.12s; }
+.seek-fill { height: 100%; background: var(--accent-2); }
+.seek-knob { position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--text); box-shadow: 0 1px 4px #0006; pointer-events: none; transition: transform 0.12s; }
+.seekbar:hover .seek-rail, .seekbar.dragging .seek-rail, .seekbar:focus-visible .seek-rail { height: 6px; }
+.seekbar:hover .seek-knob, .seekbar.dragging .seek-knob { transform: scale(1.15); }
+.seekbar.disabled .seek-knob { display: none; }
+.seekbar:focus-visible .seek-knob { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 50%, transparent); }
+.tv-progress div, .mini-progress div { transition: none !important; }

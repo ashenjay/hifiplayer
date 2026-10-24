@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+- The seek bar's coloured part and handle could drift apart, looking like a double line. It now moves smoothly instead of in steps.
+- The seek bar could freeze (also when Spotify Connect took over, and afterwards) if a drag was released outside the bar.
+
 ## [1.2.2] - 2026-10-25
 
 ### Added

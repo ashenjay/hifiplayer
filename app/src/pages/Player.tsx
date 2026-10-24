@@ -107,7 +107,7 @@ function NowPlaying() {
           </button>
           <button className="icon-btn big" onClick={() => api.command({ type: 'next' })}>{Icon.next}</button>
         </div>
-        <Seekbar position={player.position} duration={player.duration ?? item.duration} />
+        <Seekbar position={player.position} duration={player.duration ?? item.duration} playing={player.status === 'playing'} />
         <div className="now-page-tools">
           <button onClick={() => window.dispatchEvent(new Event('tv-mode'))} title="Full-screen view (F)">TV mode</button>
           {inTauri && <button onClick={() => api.openMiniPlayer()} title="Small always-on-top player (M)">Mini player</button>}
