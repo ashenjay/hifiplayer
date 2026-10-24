@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-25
+
+### Fixed
+- The mini player opened as an empty black box and the main window stayed open. It now shows the player, opens at the bottom-right of the screen and hides the main window.
+- Closing the mini player with Alt+F4 left HiFi Player hidden in the tray; the main window now comes back.
+
 ## [1.2.0] - 2026-10-24
 
 ### Added
@@ -63,7 +69,8 @@ First public release.
 - Spotify streams are Ogg Vorbis 320 kbps (not lossless).
 - Full Qobuz/Tidal streaming needs partner API access from those services.
 
-[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/ashenjay/hifiplayer/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ashenjay/hifiplayer/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ashenjay/hifiplayer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ashenjay/hifiplayer/releases/tag/v1.0.0

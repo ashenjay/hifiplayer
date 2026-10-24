@@ -334,15 +334,31 @@ fn palette(path: &str) -> Option<Vec<String>> {
 }
 
 /// A small always-on-top player; the main window hides meanwhile.
+/// (Async: creating a window from a synchronous command hangs on Windows.)
 #[tauri::command]
-fn open_mini_player(app: tauri::AppHandle) -> Res<()> {
+async fn open_mini_player(app: tauri::AppHandle) -> Res<()> {
     if let Some(w) = app.get_webview_window("mini") {
         let _ = w.show();
         let _ = w.set_focus();
     } else {
-        tauri::WebviewWindowBuilder::new(&app, "mini", tauri::WebviewUrl::App("index.html#mini".into()))
-            .title("HiFi Player")
-            .inner_size(420.0, 104.0)
+        // Bottom-right of the screen the main window is on, above the taskbar.
+        let (w, h) = (420.0, 104.0);
+        let spot = app.get_webview_window("main").and_then(|m| m.current_monitor().ok().flatten()).map(|mon| {
+            let scale = mon.scale_factor();
+            let area = mon.work_area();
+            (
+                (area.position.x as f64 + area.size.width as f64) / scale - w - 16.0,
+                (area.position.y as f64 + area.size.height as f64) / scale - h - 16.0,
+            )
+        });
+        // The page tells itself apart by the window label ("mini").
+        let mut builder = tauri::WebviewWindowBuilder::new(&app, "mini", tauri::WebviewUrl::App("index.html".into()));
+        if let Some((x, y)) = spot {
+            builder = builder.position(x, y);
+        }
+        builder
+            .title("HiFi Player mini player")
+            .inner_size(w, h)
             .resizable(false)
             .decorations(false)
             .always_on_top(true)
@@ -358,11 +374,8 @@ fn open_mini_player(app: tauri::AppHandle) -> Res<()> {
 
 /// Back from the mini player to the full window.
 #[tauri::command]
-fn show_main_window(app: tauri::AppHandle) {
+async fn show_main_window(app: tauri::AppHandle) {
     desktop::show_main(&app);
-    if let Some(w) = app.get_webview_window("mini") {
-        let _ = w.close();
-    }
 }
 
 // ---- Discovery: similar albums, radio, on this day ------------------------------------
@@ -937,6 +950,9 @@ async fn spotify_logout() -> Res<()> {
     blocking(|| spotify::logout().map_err(anyhow_err)).await
 }
 
+/// Set while quitting, so closing windows doesn't bring the main window back.
+static EXITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let settings = Settings::load();
@@ -973,6 +989,13 @@ pub fn run() {
         )
         .manage(AppState { player, library: Mutex::new(library), services, settings: Mutex::new(settings), remote, dlna })
         .on_window_event(|window, event| {
+            // Closing the mini player any way (Alt+F4 too) brings the main window back.
+            if window.label() == "mini"
+                && matches!(event, tauri::WindowEvent::Destroyed)
+                && !EXITING.load(std::sync::atomic::Ordering::Relaxed)
+            {
+                desktop::show_main(window.app_handle());
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let to_tray = window.app_handle().state::<AppState>().settings.lock().unwrap().desktop.close_to_tray;
                 if to_tray && window.label() == "main" {
@@ -1108,6 +1131,7 @@ pub fn run() {
         .expect("error while building the app")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                EXITING.store(true, std::sync::atomic::Ordering::Relaxed);
                 // Release ASIO/WASAPI cleanly so the DAC is free for other apps.
                 app.state::<AppState>().player.shutdown();
             }
