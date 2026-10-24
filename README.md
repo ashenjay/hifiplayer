@@ -39,6 +39,8 @@
 - **Native DSD:** DSD64 up to DSD512 straight to the DAC over ASIO, with DoP and DSDâ†’PCM fallbacks for other DACs.
 - **True gapless:** consecutive tracks in the same format play through one uninterrupted stream.
 - **Locked pause:** the DAC stays locked on silence while paused, so there are no clicks or relocks.
+- **DST, SACD ISO, cue sheets and MQA display**, plus a bit-perfect self-test and the DAC's real locked rate.
+- **Audio analysis:** DR, LUFS and detection of fake hi-res (upsampled or MP3-sourced) files.
 
 </td>
 <td width="50%" valign="top">
@@ -48,6 +50,8 @@
 - **Smart grouping:** compilations, "feat." artists and untagged `Artist - Album` folders are sorted out automatically.
 - **Cover art:** embedded artwork or `folder.jpg` / `cover.jpg`.
 - **Formats:** FLAC, ALAC, WAV, AIFF, DSF, DFF, MP3, AAC, Ogg Vorbis.
+- **Playlists, favourites, ratings and history**, radio mixes, similar albums and "On this day".
+- **Online extras (optional):** missing covers and artist bios, ListenBrainz / Last.fm scrobbling, Discord status.
 
 </td>
 </tr>
@@ -58,6 +62,8 @@
 - **Album grid:** Roon-inspired dark theme with DSD / Hi-Res / CD filters.
 - **Library pages:** album and artist pages, instant search, queue management.
 - **Now Playing:** full-screen view plus a bar with a seek bar and a quality badge.
+- **Themes:** dark, light, black (OLED) and midnight, accent colours and colours from the cover art.
+- **TV mode, mini player, synced lyrics and a tag editor.**
 - **Keyboard:** Space to play/pause, Alt+â† to go back.
 
 </td>
@@ -66,6 +72,7 @@
 ### ðŸŸ¢ Streaming & Remote
 - **Spotify Connect:** pick "HiFi Player" as a speaker in any Spotify app; it plays through the same ASIO / WASAPI output.
 - **Phone remote:** a browser remote on your Wi-Fi (scan a QR code, enter the PIN) with now playing, transport, queue and album browsing.
+- **DLNA / UPnP:** play from phone and NAS apps through HiFi Player, or share your library with TVs and streamers.
 - **Qobuz & TIDAL:** screens for users who have partner API access.
 
 </td>
