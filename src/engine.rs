@@ -337,8 +337,13 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
         let ctrl = Arc::new(Control { buffer: opts.buffer, ..Control::default() });
         // One second of audio in the ring buffer; live Spotify audio uses a
         // quarter second so pause and seek in the Spotify app react quickly.
-        let secs = if matches!(source, Source::Live(_)) { 0.25 } else { 1.0 };
-        // Radio: no seeking, and a full second absorbs network jitter.
+        // Radio waits up to a few seconds for the station between songs or on a
+        // slow network, so it gets a bigger cushion (start-up stays ~1.5 s).
+        let secs = match source {
+            Source::Live(_) => 0.25,
+            Source::Radio(_) => 3.0,
+            _ => 1.0,
+        };
         let capacity = ((plan.frame_rate() * secs) as usize * plan.channels()).max(4096);
         let (producer, consumer) = RingBuffer::<i32>::new(capacity);
         match output::start(opts.backend, opts.device.clone(), plan.stream_format(), consumer, ctrl.clone()) {
