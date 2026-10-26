@@ -243,6 +243,21 @@ async fn track_lyrics(state: State<'_, AppState>, item: QueueItem) -> Res<Option
     .await
 }
 
+/// Live levels and spectrum of what is playing (display only).
+#[tauri::command]
+fn player_meter(state: State<'_, AppState>) -> Option<hifiplayer::meter::MeterReading> {
+    state.player.meter()
+}
+
+/// Waveform overview for the seek bar (local files only).
+#[tauri::command]
+async fn track_waveform(item: QueueItem) -> Res<Option<Vec<u8>>> {
+    if !matches!(item.media, Media::File { .. }) {
+        return Ok(None);
+    }
+    blocking(move || Ok(hifiplayer::waveform::waveform(&item.media).ok())).await
+}
+
 /// Write tags into the files of the given library tracks, then rescan them.
 /// Returns how many files were changed.
 #[tauri::command]
@@ -1115,6 +1130,8 @@ pub fn run() {
             asio_control_panel,
             self_test,
             track_lyrics,
+            player_meter,
+            track_waveform,
             library_tracks,
             edit_tags,
             items_for_paths,

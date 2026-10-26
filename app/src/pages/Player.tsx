@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, clock, currentItem, inTauri } from '../api'
 import { Cover, Icon, QualityBadge } from '../components/common'
 import { LyricsView, useLyrics } from '../components/Extras'
+import { MeterModeSwitch, Meters, useMeterPref } from '../components/Meters'
 import { coverTint, useCoverColors } from '../theme'
 import { Seekbar } from '../components/NowPlayingBar'
 import { SignalPathView } from '../components/SignalPathView'
@@ -90,6 +91,7 @@ function NowPlaying() {
   const lyrics = useLyrics(item)
   const colors = useCoverColors(item.art)
   const [showLyrics, setShowLyrics] = useState(true)
+  const [metersOn, setMetersOn, meterMode, setMeterMode] = useMeterPref()
   if (!player) return null
   const upNext = player.live ? [] : player.queue.slice((player.index ?? 0) + 1, (player.index ?? 0) + 4)
   return (
@@ -107,12 +109,23 @@ function NowPlaying() {
           </button>
           <button className="icon-btn big" onClick={() => api.command({ type: 'next' })}>{Icon.next}</button>
         </div>
-        <Seekbar position={player.position} duration={player.duration ?? item.duration} playing={player.status === 'playing'} />
+        <Seekbar position={player.position} duration={player.duration ?? item.duration} playing={player.status === 'playing'} item={item} />
         <div className="now-page-tools">
           <button onClick={() => window.dispatchEvent(new Event('tv-mode'))} title="Full-screen view (F)">TV mode</button>
           {inTauri && <button onClick={() => api.openMiniPlayer()} title="Small always-on-top player (M)">Mini player</button>}
           <button className={showLyrics ? 'on' : ''} onClick={() => setShowLyrics((s) => !s)}>Lyrics</button>
+          <button className={metersOn ? 'on' : ''} onClick={() => setMetersOn(!metersOn)} title="Level meters and spectrum (display only)">
+            Meters
+          </button>
         </div>
+        {metersOn && (
+          <div className="card compact">
+            <h3 className="meters-head">
+              Meters <MeterModeSwitch mode={meterMode} onChange={setMeterMode} />
+            </h3>
+            <Meters mode={meterMode} />
+          </div>
+        )}
         {showLyrics && (
           <div className="card compact">
             <h3>Lyrics {lyrics && <span className="muted small">· {lyrics.source === 'LRCLIB' ? 'from LRCLIB' : lyrics.source}</span>}</h3>

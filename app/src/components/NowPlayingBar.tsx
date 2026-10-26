@@ -169,7 +169,7 @@ export function NowPlayingBar() {
             {player?.repeat === 'one' ? Icon.repeatOne : Icon.repeat}
           </button>
         </div>
-        <Seekbar position={player?.position ?? 0} duration={player?.duration ?? item?.duration} playing={player?.status === 'playing'} />
+        <Seekbar position={player?.position ?? 0} duration={player?.duration ?? item?.duration} playing={player?.status === 'playing'} item={item} />
       </div>
 
       <div className="now-right">

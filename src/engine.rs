@@ -16,6 +16,7 @@ use rtrb::{Producer, RingBuffer};
 use serde::{Deserialize, Serialize};
 
 use crate::dsd::{self, DopEncoder, DsdToPcm};
+use crate::meter::{Feed, MeterReading, MeterTap};
 use crate::output::{self, Backend, Control, RunningOutput, StreamFormat};
 use crate::source::{Media, Source, SourceFormat, dsd_name, khz};
 
@@ -202,7 +203,25 @@ struct Shared {
     skipped: Mutex<Vec<(usize, String)>>,
 }
 
+/// Reads the live meters of a playback (cheap to clone, usable from any thread).
+#[derive(Clone)]
+pub struct MeterSource {
+    tap: Arc<MeterTap>,
+    ctrl: Arc<Control>,
+}
+
+impl MeterSource {
+    /// Levels at the position being heard; None while paused or before audio.
+    pub fn read(&self) -> Option<MeterReading> {
+        if self.ctrl.is_paused() {
+            return None;
+        }
+        self.tap.read(self.ctrl.frames_played.load(Ordering::Relaxed))
+    }
+}
+
 pub struct Playback {
+    meter: Arc<MeterTap>,
     ctrl: Arc<Control>,
     output: RunningOutput,
     producer: JoinHandle<Result<()>>,
@@ -237,6 +256,10 @@ impl Playback {
             secs: offset + (played - cur.start_frame) as f64 / self.frame_rate,
             duration: cur.duration,
         }
+    }
+
+    pub fn meter_source(&self) -> MeterSource {
+        MeterSource { tap: self.meter.clone(), ctrl: self.ctrl.clone() }
     }
 
     pub fn underruns(&self) -> u64 {
@@ -343,12 +366,18 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
                 };
                 let shared = Arc::new(Shared::default());
                 shared.boundaries.lock().unwrap().push(Boundary { start_frame: 0, index, duration });
+                let feed = match plan {
+                    Plan::Native { rate, channels } | Plan::Dop { rate, channels } => Feed::dsd(rate, channels),
+                    _ => Feed::pcm(plan.frame_rate() as u32),
+                };
+                let meter = feed.tap.clone();
                 let (prod_ctrl, prod_shared) = (ctrl.clone(), shared.clone());
                 let first = OpenTrack { source, duration, limit };
                 let producer = thread::Builder::new()
                     .name("decoder".into())
-                    .spawn(move || produce(first, index, plan, src_ch, producer, prod_ctrl, next, prod_shared))?;
+                    .spawn(move || produce(first, index, plan, src_ch, producer, prod_ctrl, next, prod_shared, feed))?;
                 return Ok(Playback {
+                    meter,
                     ctrl,
                     output,
                     producer,
@@ -379,6 +408,7 @@ fn produce(
     ctrl: Arc<Control>,
     mut next: NextFn,
     shared: Arc<Shared>,
+    mut feed: Feed,
 ) -> Result<()> {
     let channels = plan.channels();
     let mut conv = Converters {
@@ -391,7 +421,7 @@ fn produce(
     let mut pushed: u64 = 0;
     loop {
         let limit = track.limit.map(|secs| (secs * plan.frame_rate()).round() as u64);
-        if !pump(&mut track.source, plan, src_ch, &mut prod, &ctrl, &mut conv, &mut pushed, limit)? {
+        if !pump(&mut track.source, plan, src_ch, &mut prod, &ctrl, &mut conv, &mut pushed, limit, &mut feed)? {
             return Ok(()); // stopped
         }
         if matches!(track.source, Source::Live(_)) {
@@ -441,6 +471,7 @@ fn pump(
     conv: &mut Converters,
     pushed: &mut u64,
     limit: Option<u64>,
+    feed: &mut Feed,
 ) -> Result<bool> {
     let channels = plan.channels() as u64;
     let mut out: Vec<i32> = Vec::new();
@@ -466,6 +497,7 @@ fn pump(
     match source {
         Source::Live(s) => {
             while s.read(&mut out, &|| ctrl.stopped())? {
+                feed.push_pcm(*pushed, &out, channels as usize);
                 if !push_all(prod, &out, ctrl) {
                     return Ok(false);
                 }
@@ -477,6 +509,7 @@ fn pump(
             while s.read(&mut out)? {
                 keep_channels(&mut out, src_ch, channels as usize);
                 let done = clip(&mut out);
+                feed.push_pcm(*pushed, &out, channels as usize);
                 if !push_all(prod, &out, ctrl) {
                     return Ok(false);
                 }
@@ -506,10 +539,21 @@ fn pump(
                     Plan::Pcm { .. } => unreachable!(),
                 }
                 let done = clip(&mut out);
+                let frames = out.len() as u64 / channels;
+                match plan {
+                    // Show DSD through a display-only conversion; PCM as it is.
+                    Plan::Native { .. } | Plan::Dop { .. } => {
+                        // One DSD byte per channel per native frame, two per DoP frame.
+                        let per = if matches!(plan, Plan::Dop { .. }) { 2 } else { 1 };
+                        let byte_frames = (frames as usize * per).min(bytes.len() / channels as usize);
+                        feed.push_dsd(*pushed, &bytes[..byte_frames * channels as usize], channels as usize, frames);
+                    }
+                    _ => feed.push_pcm(*pushed, &out, channels as usize),
+                }
                 if !push_all(prod, &out, ctrl) {
                     return Ok(false);
                 }
-                *pushed += out.len() as u64 / channels;
+                *pushed += frames;
                 if done {
                     break;
                 }

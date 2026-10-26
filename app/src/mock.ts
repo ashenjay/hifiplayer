@@ -55,6 +55,16 @@ const tracksFull = tracks.map((t) => ({ ...t, rating: t.trackNo === 1 ? 5 : 0, f
 
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
   album_extras: () => [],
+  player_meter: () => {
+    const t = performance.now() / 1000
+    const lvl = -14 + 6 * Math.sin(t * 1.7) + 3 * Math.sin(t * 5.3)
+    return {
+      peak: [lvl + 3 + Math.random() * 2, lvl + 2 + Math.random() * 2], rms: [lvl - 3, lvl - 4],
+      spectrum: Array.from({ length: 48 }, (_, i) => -20 - i * 1.1 + 8 * Math.sin(t * 3 + i / 3) + Math.random() * 4),
+      topHz: 22000, dsd: false,
+    }
+  },
+  track_waveform: () => Array.from({ length: 800 }, (_, i) => Math.round(60 + 120 * Math.abs(Math.sin(i / 37)) * (0.6 + 0.4 * Math.sin(i / 9)) + Math.random() * 30)),
   similar_albums: () => albumsFull.slice(2, 7),
   on_this_day: () => ({ played: [[3, albumsFull[1]]], anniversaries: [[50, albumsFull[0]], [40, albumsFull[2]]] }),
   artist_info: (args) => ({

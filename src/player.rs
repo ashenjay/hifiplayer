@@ -149,6 +149,7 @@ pub enum Command {
 pub struct Player {
     tx: Sender<Command>,
     state: Arc<Mutex<PlayerState>>,
+    meter: Arc<Mutex<Option<engine::MeterSource>>>,
 }
 
 impl Player {
@@ -183,6 +184,8 @@ impl Player {
         }));
         let (tx, rx) = mpsc::channel();
         let st = state.clone();
+        let meter: Arc<Mutex<Option<engine::MeterSource>>> = Arc::default();
+        let meter_slot = meter.clone();
         thread::Builder::new()
             .name("player".into())
             .spawn(move || {
@@ -199,11 +202,18 @@ impl Player {
                     last_saved: Instant::now(),
                     last_rate: None,
                     order: Arc::new(Mutex::new(Order::default())),
+                    meter: meter_slot,
                 }
                 .run(rx)
             })
             .expect("spawn player thread");
-        Self { tx, state }
+        Self { tx, state, meter }
+    }
+
+    /// Live levels and spectrum of what is playing (display only).
+    pub fn meter(&self) -> Option<crate::meter::MeterReading> {
+        let source = self.meter.lock().unwrap().clone()?;
+        source.read()
     }
 
     pub fn send(&self, cmd: Command) {
@@ -247,6 +257,8 @@ struct Control {
     last_rate: Option<u32>,
     /// Translates the decoder's track tags into current queue positions.
     order: Arc<Mutex<Order>>,
+    /// Lets `Player::meter` read the current playback's meters.
+    meter: Arc<Mutex<Option<engine::MeterSource>>>,
 }
 
 /// The decoder gets an opaque tag per track (queue position + edit epoch),
@@ -358,6 +370,7 @@ impl Control {
                 }
             }
             self.tick();
+            *self.meter.lock().unwrap() = self.current.as_ref().map(|p| p.meter_source());
         }
     }
 

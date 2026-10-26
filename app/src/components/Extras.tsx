@@ -11,6 +11,7 @@ import {
 import { useNav } from '../nav'
 import { coverTint, useAppearance, useCoverColors } from '../theme'
 import { Cover, Icon } from './common'
+import { MeterModeSwitch, Meters, useMeterPref } from './Meters'
 import { useSmoothPosition } from './Seekbar'
 
 // ---- Lyrics ------------------------------------------------------------------------------
@@ -92,6 +93,19 @@ export function TvMode({ onClose }: { onClose: () => void }) {
 
   const dur = player?.duration ?? item?.duration ?? 0
   const pos = useSmoothPosition(player?.position ?? 0, player?.status === 'playing', dur)
+  const [metersOn, setMetersOn, meterMode, setMeterMode] = useMeterPref()
+  // V cycles the meters: VU → peak → spectrum → off.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'v') return
+      if (!metersOn) return setMetersOn(true), setMeterMode('vu')
+      if (meterMode === 'vu') return setMeterMode('peak')
+      if (meterMode === 'peak') return setMeterMode('spectrum')
+      setMetersOn(false)
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [metersOn, meterMode]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className={`tv tinted${idle ? ' idle' : ''}`} style={coverTint(colors)}>
       <button className="icon-btn tv-close" title="Leave TV mode (Esc)" onClick={onClose}>{Icon.close}</button>
@@ -104,12 +118,21 @@ export function TvMode({ onClose }: { onClose: () => void }) {
             <div className="tv-album muted">{item.album}</div>
             <div className="tv-progress"><div style={{ width: `${dur ? (pos / dur) * 100 : 0}%` }} /></div>
             <div className="tv-times muted"><span>{clock(pos)}</span><span>{item.quality}</span><span>{clock(dur)}</span></div>
+            {metersOn && (
+              <div className="tv-meters">
+                <Meters mode={meterMode} big />
+                <MeterModeSwitch mode={meterMode} onChange={setMeterMode} />
+              </div>
+            )}
             <div className="tv-controls">
               <button className="icon-btn big" onClick={() => api.command({ type: 'previous' })}>{Icon.prev}</button>
               <button className="play-btn big" onClick={() => api.command({ type: 'togglePause' })}>
                 {player?.status === 'playing' ? Icon.pause : Icon.play}
               </button>
               <button className="icon-btn big" onClick={() => api.command({ type: 'next' })}>{Icon.next}</button>
+              <button className={`tv-meter-btn${metersOn ? ' on' : ''}`} title="Meters (V)" onClick={() => setMetersOn(!metersOn)}>
+                Meters
+              </button>
             </div>
           </div>
           {lyrics && lyrics.synced.length > 0 && <LyricsView lyrics={lyrics} position={pos} big />}
