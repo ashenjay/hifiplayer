@@ -311,7 +311,7 @@ pub fn analyse(media: &Media, progress: &dyn Fn(f64)) -> Result<Analysis> {
                 conv.as_mut().unwrap().process(&bytes, &mut pcm);
                 m
             }
-            Source::Live(_) | Source::Radio(_) => bail!("live streams can't be analysed"),
+            Source::Live(_) | Source::Radio(_) | Source::AirPlay(_) => bail!("live streams can't be analysed"),
         };
         if !more {
             break;

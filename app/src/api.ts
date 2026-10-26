@@ -152,6 +152,7 @@ export type Media =
   | { kind: 'stream'; service: string; id: string }
   | { kind: 'spotify' }
   | { kind: 'radio'; url: string }
+  | { kind: 'airplay' }
   | { kind: 'url'; url: string; mime?: string | null }
 
 export interface RemoteStatus {
@@ -337,6 +338,7 @@ export interface OnlineSettings {
   discordAppId: string
   dlnaRenderer: boolean
   dlnaServer: boolean
+  airplay: boolean
   dlnaName: string
   dlnaPort: number
 }
@@ -514,6 +516,7 @@ export const api = {
   onThisDay: () => invoke<OnThisDay>('on_this_day'),
   setOnline: (online: OnlineSettings) => invoke<DlnaStatus>('set_online', { online }),
   dlnaStatus: () => invoke<DlnaStatus>('dlna_status'),
+  airplayStatus: () => invoke<{ running: boolean; error?: string | null }>('airplay_status'),
   artistInfo: (name: string) => invoke<ArtistInfo | null>('artist_info', { name }),
   fetchMissingArt: () => invoke<number>('fetch_missing_art'),
   scrobbleStatus: () => invoke<ScrobbleStatus>('scrobble_status'),

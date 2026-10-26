@@ -145,6 +145,8 @@ pub enum Command {
     SetRepeat(Repeat),
     SetSleep(Option<SleepTimer>),
     SetFallback(Option<PlayOptions>),
+    /// An AirPlay sender started or stopped (sent by the app).
+    AirPlay(crate::airplay::AirPlayEvent),
 }
 
 #[derive(Clone)]
@@ -197,6 +199,7 @@ impl Player {
                     queue: Arc::new(Mutex::new(queue)),
                     current: None,
                     spotify: false,
+                    airplay: false,
                     repeat: Arc::new(Mutex::new(repeat)),
                     unshuffled: None,
                     stop_after_track: Arc::new(AtomicBool::new(false)),
@@ -247,6 +250,8 @@ struct Control {
     current: Option<Playback>,
     /// Spotify Connect owns the current stream.
     spotify: bool,
+    /// An AirPlay sender owns the current stream.
+    airplay: bool,
     /// Shared with the decoder's "next track" callback.
     repeat: Arc<Mutex<Repeat>>,
     /// The queue in its original order while shuffle is on.
@@ -397,6 +402,21 @@ impl Control {
     }
 
     fn handle(&mut self, cmd: Command) {
+        // While AirPlay plays, the transport buttons control the sender.
+        if self.airplay {
+            use crate::airplay::{self, Remote as AirRemote};
+            match &cmd {
+                Command::TogglePause => return airplay::remote(AirRemote::PlayPause),
+                Command::Next => return airplay::remote(AirRemote::Next),
+                Command::Previous => return airplay::remote(AirRemote::Previous),
+                Command::Seek(_) => return,
+                Command::PlayQueue { .. } | Command::Jump(_) | Command::Stop => {
+                    airplay::disconnect();
+                    self.end_airplay();
+                }
+                _ => {}
+            }
+        }
         // While Spotify plays, the transport buttons control Spotify.
         if self.spotify {
             let remote = match cmd {
@@ -606,6 +626,20 @@ impl Control {
                 self.stop_current();
                 let _ = ack.send(());
             }
+            Command::AirPlay(ev) => self.on_airplay(ev),
+            Command::SetOptions(opts) if self.airplay => {
+                // Move the AirPlay stream to the new device without dropping the sender.
+                self.state.lock().unwrap().options = opts;
+                if let Some(p) = self.current.take() {
+                    p.stop();
+                    let _ = p.wait();
+                }
+                if let Err(e) = self.start_airplay_output() {
+                    crate::airplay::disconnect();
+                    self.end_airplay();
+                    self.state.lock().unwrap().error = Some(format!("AirPlay: {e:#}"));
+                }
+            }
             Command::SetOptions(opts) if self.spotify => {
                 // Move the live Spotify stream to the new device without pausing Spotify.
                 self.state.lock().unwrap().options = opts;
@@ -661,7 +695,7 @@ impl Control {
     /// Restart the current track at its position, so the decoder picks up a
     /// changed queue order / repeat / sleep setting for what comes next.
     fn restart_chain(&mut self) {
-        if self.spotify {
+        if self.spotify || self.airplay {
             return;
         }
         let Some(p) = &self.current else { return };
@@ -821,6 +855,10 @@ impl Control {
             }
             SpotifyEvent::Playing => {
                 // Spotify was picked as the speaker: take over the output.
+                if self.airplay {
+                    crate::airplay::disconnect();
+                    self.end_airplay();
+                }
                 self.stop_current();
                 // Audio left over from an earlier session must not play now.
                 spotify::flush_audio();
@@ -838,6 +876,70 @@ impl Control {
             SpotifyEvent::Stopped if self.spotify => self.end_spotify(),
             _ => {}
         }
+    }
+
+    fn on_airplay(&mut self, ev: crate::airplay::AirPlayEvent) {
+        use crate::airplay::AirPlayEvent;
+        match ev {
+            AirPlayEvent::Started => {
+                if self.spotify {
+                    spotify::remote(Remote::Pause);
+                    self.end_spotify();
+                }
+                self.stop_current();
+                if let Err(e) = self.start_airplay_output() {
+                    crate::airplay::disconnect();
+                    self.end_airplay();
+                    self.state.lock().unwrap().error = Some(format!("AirPlay: {e:#}"));
+                }
+            }
+            AirPlayEvent::Stopped if self.airplay => self.end_airplay(),
+            AirPlayEvent::Stopped => {}
+        }
+    }
+
+    fn start_airplay_output(&mut self) -> anyhow::Result<()> {
+        let opts = self.opts();
+        let p = match engine::start(usize::MAX, &Media::AirPlay, 0.0, &opts, Box::new(|_| None)) {
+            Ok(p) => p,
+            Err(e) => {
+                let fallback = self.state.lock().unwrap().fallback.clone().filter(|f| *f != opts);
+                let Some(f) = fallback else { return Err(e) };
+                engine::start(usize::MAX, &Media::AirPlay, 0.0, &f, Box::new(|_| None)).map_err(|_| e)?
+            }
+        };
+        let mut st = self.state.lock().unwrap();
+        st.signal_path = Some(p.path.clone());
+        st.status = Status::Playing;
+        st.underruns = 0;
+        drop(st);
+        self.current = Some(p);
+        self.airplay = true;
+        self.update_airplay_state();
+        Ok(())
+    }
+
+    fn end_airplay(&mut self) {
+        self.airplay = false;
+        self.stop_current();
+        self.state.lock().unwrap().live = None;
+    }
+
+    fn update_airplay_state(&self) {
+        let now = crate::airplay::now_playing().unwrap_or_default();
+        let mut st = self.state.lock().unwrap();
+        st.position = now.position;
+        st.duration = now.duration;
+        let sender = now.client.clone().unwrap_or_else(|| "AirPlay".into());
+        st.live = Some(QueueItem {
+            media: Media::AirPlay,
+            title: now.title.unwrap_or_else(|| format!("Playing from {sender}")),
+            artist: now.artist,
+            album: now.album,
+            art: now.art,
+            duration: now.duration,
+            quality: Some("AirPlay ALAC 16/44.1".into()),
+        });
     }
 
     /// Open the output for the live Spotify stream (the fallback device if
@@ -928,12 +1030,27 @@ impl Control {
                 self.sleep_at = None;
                 if self.spotify {
                     spotify::remote(Remote::Pause);
+                } else if self.airplay {
+                    crate::airplay::remote(crate::airplay::Remote::PlayPause);
                 } else if let Some(p) = &self.current {
                     p.set_paused(true);
                     self.state.lock().unwrap().status = Status::Paused;
                 }
             }
             self.update_sleep_state();
+        }
+        if self.airplay {
+            self.update_airplay_state();
+            let finished = self.current.as_ref().is_none_or(|p| p.is_finished());
+            if let Some(p) = &self.current {
+                let mut st = self.state.lock().unwrap();
+                record_dropouts(&mut st, p.underruns());
+            }
+            if finished {
+                crate::airplay::disconnect();
+                self.end_airplay();
+            }
+            return;
         }
         if self.spotify {
             self.update_spotify_state();

@@ -38,6 +38,36 @@ struct AppState {
     settings: Mutex<Settings>,
     remote: remote::Remote,
     dlna: dlna::Dlna,
+    airplay: Mutex<Option<hifiplayer::airplay::AirPlay>>,
+    airplay_error: Mutex<Option<String>>,
+}
+
+/// Start or stop the AirPlay receiver to match the settings.
+fn apply_airplay(state: &AppState, online: &OnlineSettings) {
+    let mut slot = state.airplay.lock().unwrap();
+    *slot = None; // stops a running receiver first
+    *state.airplay_error.lock().unwrap() = None;
+    if online.airplay {
+        let player = state.player.clone();
+        let name = online.dlna_name.trim();
+        let name = if name.is_empty() { "HiFi Player" } else { name };
+        match hifiplayer::airplay::start(name, move |ev| player.send(Command::AirPlay(ev))) {
+            Ok(a) => *slot = Some(a),
+            Err(e) => *state.airplay_error.lock().unwrap() = Some(format!("{e:#}")),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AirPlayStatus {
+    running: bool,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn airplay_status(state: State<'_, AppState>) -> AirPlayStatus {
+    AirPlayStatus { running: state.airplay.lock().unwrap().is_some(), error: state.airplay_error.lock().unwrap().clone() }
 }
 
 type Res<T> = Result<T, String>;
@@ -485,6 +515,7 @@ async fn on_this_day(state: State<'_, AppState>) -> Res<OnThisDay> {
 #[tauri::command]
 fn set_online(state: State<'_, AppState>, online: OnlineSettings) -> Res<dlna::DlnaStatus> {
     let mut s = state.settings.lock().unwrap();
+    let airplay_changed = s.online.airplay != online.airplay || (online.airplay && s.online.dlna_name != online.dlna_name);
     let dlna_changed = s.online.dlna_renderer != online.dlna_renderer
         || s.online.dlna_server != online.dlna_server
         || s.online.dlna_name != online.dlna_name
@@ -494,6 +525,9 @@ fn set_online(state: State<'_, AppState>, online: OnlineSettings) -> Res<dlna::D
     drop(s);
     if dlna_changed {
         state.dlna.apply(&online);
+    }
+    if airplay_changed {
+        apply_airplay(&state, &online);
     }
     Ok(state.dlna.status())
 }
@@ -1065,7 +1099,16 @@ pub fn run() {
                 .with_handler(move |_app, shortcut, event| desktop::on_hotkey(&hotkey_player, shortcut, event.state()))
                 .build(),
         )
-        .manage(AppState { player, library: Mutex::new(library), services, settings: Mutex::new(settings), remote, dlna })
+        .manage(AppState {
+            player,
+            library: Mutex::new(library),
+            services,
+            settings: Mutex::new(settings),
+            remote,
+            dlna,
+            airplay: Mutex::new(None),
+            airplay_error: Mutex::new(None),
+        })
         .on_window_event(|window, event| {
             // Closing the mini player any way (Alt+F4 too) brings the main window back.
             if window.label() == "mini"
@@ -1095,6 +1138,11 @@ pub fn run() {
             background::start_periodic_scan(app.handle());
             background::start_online_jobs(app.handle());
             presence::start(app.handle());
+            {
+                let state = app.state::<AppState>();
+                let online = state.settings.lock().unwrap().online.clone();
+                apply_airplay(&state, &online);
+            }
             desktop::set_global_hotkeys(app.handle(), desktop_settings.global_hotkeys);
             if std::env::args().any(|a| a == "--minimized")
                 && let Some(w) = app.get_webview_window("main")
@@ -1203,6 +1251,7 @@ pub fn run() {
             on_this_day,
             set_online,
             dlna_status,
+            airplay_status,
             artist_info,
             fetch_missing_art,
             scrobble_status,

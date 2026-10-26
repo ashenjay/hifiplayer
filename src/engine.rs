@@ -341,6 +341,7 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
         // slow network, so it gets a bigger cushion (start-up stays ~1.5 s).
         let secs = match source {
             Source::Live(_) => 0.25,
+            Source::AirPlay(_) => 0.5,
             Source::Radio(_) => 3.0,
             _ => 1.0,
         };
@@ -430,7 +431,7 @@ fn produce(
         if !pump(&mut track.source, plan, src_ch, &mut prod, &ctrl, &mut conv, &mut pushed, limit, &mut feed)? {
             return Ok(()); // stopped
         }
-        if matches!(track.source, Source::Live(_) | Source::Radio(_)) {
+        if matches!(track.source, Source::Live(_) | Source::Radio(_) | Source::AirPlay(_)) {
             // Spotify manages its own queue; a live stream just ended.
             return Ok(());
         }
@@ -501,6 +502,16 @@ fn pump(
         return Ok(true);
     }
     match source {
+        Source::AirPlay(s) => {
+            while s.read(&mut out, &|| ctrl.stopped())? {
+                feed.push_pcm(*pushed, &out, channels as usize);
+                if !push_all(prod, &out, ctrl) {
+                    return Ok(false);
+                }
+                *pushed += out.len() as u64 / channels;
+            }
+            return Ok(!ctrl.stopped());
+        }
         Source::Radio(s) => {
             while s.read(&mut out, &|| ctrl.stopped())? {
                 keep_channels(&mut out, src_ch, channels as usize);

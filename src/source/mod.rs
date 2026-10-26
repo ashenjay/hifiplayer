@@ -36,6 +36,8 @@ pub enum Media {
     Spotify,
     /// An internet radio station (an endless stream).
     Radio { url: String },
+    /// Audio from an iPhone, iPad or Mac through AirPlay.
+    AirPlay,
 }
 
 /// Where to fetch a streaming track right now (URLs usually expire).
@@ -117,6 +119,7 @@ pub enum Source {
     Sacd(sacd::SacdSource),
     Live(crate::spotify::LiveSource),
     Radio(radio::RadioSource),
+    AirPlay(crate::airplay::AirPlaySource),
 }
 
 impl Source {
@@ -146,6 +149,7 @@ impl Source {
             }
             Media::Spotify => Ok(Source::Live(crate::spotify::LiveSource::open()?)),
             Media::Radio { url } => Ok(Source::Radio(radio::RadioSource::open(url)?)),
+            Media::AirPlay => Ok(Source::AirPlay(crate::airplay::AirPlaySource::open()?)),
             Media::Url { url, mime } => {
                 let ext = url_ext(url, mime.as_deref());
                 if ext == "dsf" || ext == "dff" {
@@ -164,7 +168,7 @@ impl Source {
             Source::Dsd(s) => s.seek(secs),
             Source::Sacd(s) => s.seek(secs),
             // Spotify seeks on its side (see spotify::remote); radio is live.
-            Source::Live(_) | Source::Radio(_) => Ok(()),
+            Source::Live(_) | Source::Radio(_) | Source::AirPlay(_) => Ok(()),
         }
     }
 
@@ -175,6 +179,7 @@ impl Source {
             Source::Sacd(s) => s.format(),
             Source::Live(_) => SourceFormat::Pcm { rate: 44_100, channels: 2, bits: 24 },
             Source::Radio(s) => s.format(),
+            Source::AirPlay(_) => SourceFormat::Pcm { rate: 44_100, channels: 2, bits: 16 },
         }
     }
 
@@ -186,6 +191,7 @@ impl Source {
             Source::Sacd(s) => s.codec_name(),
             Source::Live(_) => "Spotify Ogg Vorbis 320 kbps",
             Source::Radio(s) => &s.codec_name,
+            Source::AirPlay(_) => "AirPlay · Apple Lossless",
         }
     }
 
@@ -195,7 +201,7 @@ impl Source {
             Source::Pcm(s) => s.duration_secs(),
             Source::Dsd(s) => Some(s.duration_secs()),
             Source::Sacd(s) => Some(s.duration_secs()),
-            Source::Live(_) | Source::Radio(_) => None,
+            Source::Live(_) | Source::Radio(_) | Source::AirPlay(_) => None,
         }
     }
 }

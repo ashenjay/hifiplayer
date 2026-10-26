@@ -2,6 +2,7 @@
 //!
 //! Kept as a library so the later desktop UI (Tauri) can reuse it unchanged.
 
+pub mod airplay;
 pub mod analysis;
 pub mod convert;
 pub mod dsd;

@@ -24,7 +24,7 @@ export function OnlineCard() {
     setO(next)
     api.setOnline(next).then(setDlna).catch((e) => toast(String(e)))
   }
-  const Toggle = ({ k, label, hint }: { k: 'lookupInfo' | 'lyrics' | 'discord' | 'dlnaRenderer' | 'dlnaServer'; label: string; hint: string }) => (
+  const Toggle = ({ k, label, hint }: { k: 'lookupInfo' | 'lyrics' | 'discord' | 'dlnaRenderer' | 'dlnaServer' | 'airplay'; label: string; hint: string }) => (
     <label className="toggle">
       <input type="checkbox" checked={o[k]} onChange={(e) => save({ [k]: e.target.checked })} />
       <span><b>{label}</b><br /><span className="muted small">{hint}</span></span>
@@ -69,6 +69,14 @@ export function OnlineCard() {
         </details>
       )}
 
+      <h3 className="sub">AirPlay</h3>
+      <Toggle
+        k="airplay"
+        label="Let iPhones, iPads and Macs play through HiFi Player"
+        hint="Pick HiFi Player in the AirPlay menu on your Apple device. Music arrives lossless (16-bit / 44.1 kHz) and plays bit-perfect on your DAC; the device's volume is ignored. HiFi Player's buttons control the device."
+      />
+      {o.airplay && <AirPlayState />}
+
       <h3 className="sub">DLNA / UPnP</h3>
       <Toggle
         k="dlnaRenderer"
@@ -80,7 +88,7 @@ export function OnlineCard() {
         label="Share my library on the network"
         hint="TVs, streamers and other players on your home network can browse and play your albums."
       />
-      {(o.dlnaRenderer || o.dlnaServer) && (
+      {(o.dlnaRenderer || o.dlnaServer || o.airplay) && (
         <div className="account-row">
           <b>Name on the network</b>
           <input value={o.dlnaName} onChange={(e) => setO({ ...o, dlnaName: e.target.value })} onBlur={() => save({})} />
@@ -93,6 +101,16 @@ export function OnlineCard() {
       )}
     </section>
   )
+}
+
+function AirPlayState() {
+  const [s, setS] = useState<{ running: boolean; error?: string | null }>()
+  useEffect(() => {
+    const t = window.setTimeout(() => api.airplayStatus().then(setS).catch(() => {}), 600)
+    return () => window.clearTimeout(t)
+  }, [])
+  if (!s) return null
+  return s.error ? <p className="warn small">{s.error}</p> : s.running ? <p className="status-ok small">● Ready — look for it in the AirPlay menu</p> : null
 }
 
 function ArtSearch() {

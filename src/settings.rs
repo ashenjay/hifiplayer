@@ -52,6 +52,8 @@ pub struct OnlineSettings {
     pub dlna_renderer: bool,
     /// Other devices on the network can browse and play the library.
     pub dlna_server: bool,
+    /// iPhones, iPads and Macs can play through HiFi Player (AirPlay).
+    pub airplay: bool,
     /// Name shown on the network.
     pub dlna_name: String,
     pub dlna_port: u16,
@@ -67,6 +69,7 @@ impl Default for OnlineSettings {
             discord_app_id: String::new(),
             dlna_renderer: false,
             dlna_server: false,
+            airplay: false,
             dlna_name: format!("HiFi Player ({host})"),
             dlna_port: 8897,
         }
