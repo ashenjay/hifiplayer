@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-27
+
+### Fixed
+- Switching devices from the speaker menu could stop playback on DACs that have both ASIO and WASAPI (for example iFi): ASIO drivers are no longer opened to read their details while music plays.
+
+### Changed
+- The meters show only the spectrum (VU and peak meters removed), also on the tablet screen.
+
 ## [1.3.0] - 2026-10-27
 
 ### Added
@@ -101,7 +109,8 @@ First public release.
 - Spotify streams are Ogg Vorbis 320 kbps (not lossless).
 - Full Qobuz/Tidal streaming needs partner API access from those services.
 
-[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/ashenjay/hifiplayer/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/ashenjay/hifiplayer/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/ashenjay/hifiplayer/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/ashenjay/hifiplayer/compare/v1.2.1...v1.2.2
