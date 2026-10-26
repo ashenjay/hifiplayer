@@ -393,7 +393,8 @@ impl Control {
                 return;
             }
             // Anything that starts local playback takes the output back from Spotify.
-            if matches!(cmd, Command::PlayQueue { .. } | Command::Jump(_) | Command::Stop | Command::SetOptions(_)) {
+            // (Changing the output device keeps Spotify playing: see SetOptions.)
+            if matches!(cmd, Command::PlayQueue { .. } | Command::Jump(_) | Command::Stop) {
                 spotify::remote(Remote::Pause);
                 self.end_spotify();
             }
@@ -586,6 +587,18 @@ impl Control {
                 self.save_session();
                 self.stop_current();
                 let _ = ack.send(());
+            }
+            Command::SetOptions(opts) if self.spotify => {
+                // Move the live Spotify stream to the new device without pausing Spotify.
+                self.state.lock().unwrap().options = opts;
+                let paused = self.current.as_ref().is_some_and(|p| p.is_paused());
+                if let Some(p) = self.current.take() {
+                    p.stop();
+                    let _ = p.wait();
+                }
+                if let Err(e) = self.start_spotify_output(paused) {
+                    self.give_up_spotify(e);
+                }
             }
             Command::SetOptions(opts) => {
                 let resume = self.current.is_some().then(|| (self.index(), self.position()));
@@ -784,21 +797,10 @@ impl Control {
             SpotifyEvent::Playing => {
                 // Spotify was picked as the speaker: take over the output.
                 self.stop_current();
-                match engine::start(usize::MAX, &Media::Spotify, 0.0, &self.opts(), Box::new(|_| None)) {
-                    Ok(p) => {
-                        let mut st = self.state.lock().unwrap();
-                        st.signal_path = Some(p.path.clone());
-                        st.status = Status::Playing;
-                        st.underruns = 0;
-                        drop(st);
-                        self.current = Some(p);
-                        self.spotify = true;
-                        self.update_spotify_state();
-                    }
-                    Err(e) => {
-                        self.state.lock().unwrap().error = Some(format!("Spotify: {e:#}"));
-                        spotify::remote(Remote::Pause);
-                    }
+                // Audio left over from an earlier session must not play now.
+                spotify::flush_audio();
+                if let Err(e) = self.start_spotify_output(false) {
+                    self.give_up_spotify(e);
                 }
             }
             SpotifyEvent::Paused if self.spotify => {
@@ -811,6 +813,43 @@ impl Control {
             SpotifyEvent::Stopped if self.spotify => self.end_spotify(),
             _ => {}
         }
+    }
+
+    /// Open the output for the live Spotify stream (the fallback device if
+    /// the chosen one can't play).
+    fn start_spotify_output(&mut self, paused: bool) -> anyhow::Result<()> {
+        let opts = self.opts();
+        let p = match engine::start(usize::MAX, &Media::Spotify, 0.0, &opts, Box::new(|_| None)) {
+            Ok(p) => p,
+            Err(e) => {
+                let fallback = self.state.lock().unwrap().fallback.clone().filter(|f| *f != opts);
+                let Some(f) = fallback else { return Err(e) };
+                let p = engine::start(usize::MAX, &Media::Spotify, 0.0, &f, Box::new(|_| None)).map_err(|_| e)?;
+                let name = |o: &PlayOptions| o.device.clone().unwrap_or_else(|| "the default device".into());
+                self.notify(format!("{} isn't available — playing Spotify on {}", name(&opts), name(&f)));
+                p
+            }
+        };
+        if paused {
+            p.set_paused(true);
+        }
+        let mut st = self.state.lock().unwrap();
+        st.signal_path = Some(p.path.clone());
+        st.status = if paused { Status::Paused } else { Status::Playing };
+        st.underruns = 0;
+        drop(st);
+        self.current = Some(p);
+        self.spotify = true;
+        self.update_spotify_state();
+        Ok(())
+    }
+
+    /// The output can't take Spotify: pause it in the Spotify app too, so
+    /// it doesn't carry on with nobody listening.
+    fn give_up_spotify(&mut self, e: anyhow::Error) {
+        spotify::remote(Remote::Pause);
+        self.end_spotify();
+        self.state.lock().unwrap().error = Some(format!("Spotify: {e:#}"));
     }
 
     fn end_spotify(&mut self) {
@@ -879,6 +918,8 @@ impl Control {
                 record_dropouts(&mut st, p.underruns());
             }
             if finished {
+                // The output stopped by itself (DAC unplugged, driver reset).
+                spotify::remote(Remote::Pause);
                 self.end_spotify();
             }
             return;

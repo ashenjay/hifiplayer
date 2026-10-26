@@ -104,6 +104,46 @@ static NOW: Mutex<Option<Now>> = Mutex::new(None);
 /// Decoded audio from librespot's sink to the engine (bounded: back-pressure keeps it real time).
 static AUDIO_TX: Mutex<Option<SyncSender<Vec<i32>>>> = Mutex::new(None);
 static AUDIO_RX: Mutex<Option<Receiver<Vec<i32>>>> = Mutex::new(None);
+/// An output is reading the stream (a LiveSource exists).
+static ATTACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Hand one packet to the engine. With an output attached this blocks while
+/// its buffer is full, which paces librespot in real time. Without one the
+/// packet waits in the queue (a device switch carries on without a gap) or,
+/// when the queue is full, is dropped at real-time speed. Never blocking for
+/// long matters: librespot handles commands such as "pause" on this thread.
+fn deliver(pcm: Vec<i32>) {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::TrySendError;
+    let frames = pcm.len() / 2;
+    let real_time = Duration::from_secs_f64(frames as f64 / 44_100.0);
+    let Some(tx) = AUDIO_TX.lock().unwrap().clone() else {
+        std::thread::sleep(real_time);
+        return;
+    };
+    let mut pcm = pcm;
+    let start = Instant::now();
+    loop {
+        match tx.try_send(pcm) {
+            Ok(()) => return,
+            Err(TrySendError::Full(p)) => {
+                if !ATTACHED.load(Ordering::Relaxed) && start.elapsed() >= real_time {
+                    return;
+                }
+                // Attached but stalled for long (driver hang): don't hold librespot forever.
+                if start.elapsed() > Duration::from_secs(2) {
+                    return;
+                }
+                pcm = p;
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                std::thread::sleep(real_time);
+                return;
+            }
+        }
+    }
+}
 
 fn runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
@@ -356,12 +396,25 @@ impl Sink for EngineSink {
             .iter()
             .map(|s| (s.clamp(-1.0, 1.0) * i32::MAX as f64) as i32)
             .collect();
-        let tx = AUDIO_TX.lock().unwrap().clone();
-        if let Some(tx) = tx {
-            // Blocks while the engine's buffer is full, which paces librespot in real time.
-            let _ = tx.send(pcm);
-        }
+        deliver(pcm);
         Ok(())
+    }
+}
+
+/// For tests: set up the audio channel without a Spotify login and return a
+/// writer that behaves like librespot's output (blocking, real-time paced).
+#[doc(hidden)]
+pub fn test_stream() -> impl FnMut(Vec<i32>) + Send {
+    let (tx, rx) = sync_channel::<Vec<i32>>(8);
+    *AUDIO_TX.lock().unwrap() = Some(tx);
+    *AUDIO_RX.lock().unwrap() = Some(rx);
+    deliver
+}
+
+/// Drop audio waiting from an earlier playback (when a new session starts).
+pub fn flush_audio() {
+    if let Some(rx) = AUDIO_RX.lock().unwrap().as_ref() {
+        while rx.try_recv().is_ok() {}
     }
 }
 
@@ -373,6 +426,7 @@ pub struct LiveSource {
 impl LiveSource {
     pub fn open() -> Result<Self> {
         let rx = AUDIO_RX.lock().unwrap().take().context("Spotify is not connected")?;
+        ATTACHED.store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(Self { rx: Some(rx) })
     }
 
@@ -398,6 +452,7 @@ impl LiveSource {
 
 impl Drop for LiveSource {
     fn drop(&mut self) {
+        ATTACHED.store(false, std::sync::atomic::Ordering::Relaxed);
         // Hand the receiver back so the next playback can attach.
         if let Some(rx) = self.rx.take() {
             let mut slot = AUDIO_RX.lock().unwrap();
