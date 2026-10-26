@@ -11,7 +11,7 @@ import {
 import { useNav } from '../nav'
 import { coverTint, useAppearance, useCoverColors } from '../theme'
 import { Cover, Icon } from './common'
-import { MeterModeSwitch, Meters, useMeterPref } from './Meters'
+import { Meters, useMeterPref } from './Meters'
 import { useSmoothPosition } from './Seekbar'
 
 // ---- Lyrics ------------------------------------------------------------------------------
@@ -106,19 +106,13 @@ export function TvMode({ onClose }: { onClose: () => void }) {
 
   const dur = player?.duration ?? item?.duration ?? 0
   const pos = useSmoothPosition(player?.position ?? 0, player?.status === 'playing', dur)
-  const [metersOn, setMetersOn, meterMode, setMeterMode] = useMeterPref()
-  // V cycles the meters: VU → peak → spectrum → off.
+  const [metersOn, setMetersOn] = useMeterPref()
+  // V shows or hides the spectrum.
   useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'v') return
-      if (!metersOn) return setMetersOn(true), setMeterMode('vu')
-      if (meterMode === 'vu') return setMeterMode('peak')
-      if (meterMode === 'peak') return setMeterMode('spectrum')
-      setMetersOn(false)
-    }
+    const key = (e: KeyboardEvent) => e.key.toLowerCase() === 'v' && setMetersOn(!metersOn)
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
-  }, [metersOn, meterMode]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [metersOn]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className={`tv tinted${idle ? ' idle' : ''}`} style={coverTint(colors)}>
       <button className="icon-btn tv-close" title="Leave TV mode (Esc)" onClick={onClose}>{Icon.close}</button>
@@ -134,8 +128,7 @@ export function TvMode({ onClose }: { onClose: () => void }) {
             <div className="tv-times muted"><span>{clock(pos)}</span><span>{item.quality}</span><span>{clock(dur)}</span></div>
             {metersOn && (
               <div className="tv-meters">
-                <Meters mode={meterMode} big />
-                <MeterModeSwitch mode={meterMode} onChange={setMeterMode} />
+                <Meters big />
               </div>
             )}
             <div className="tv-controls">
@@ -144,8 +137,8 @@ export function TvMode({ onClose }: { onClose: () => void }) {
                 {player?.status === 'playing' ? Icon.pause : Icon.play}
               </button>
               <button className="icon-btn big" onClick={() => api.command({ type: 'next' })}>{Icon.next}</button>
-              <button className={`tv-meter-btn${metersOn ? ' on' : ''}`} title="Meters (V)" onClick={() => setMetersOn(!metersOn)}>
-                Meters
+              <button className={`tv-meter-btn${metersOn ? ' on' : ''}`} title="Spectrum (V)" onClick={() => setMetersOn(!metersOn)}>
+                Spectrum
               </button>
             </div>
           </div>
@@ -348,7 +341,7 @@ const WHATS_NEW: { version: string; groups: [string, string[]][] } = {
       'A Now Playing screen for a tablet or second screen, from the phone remote',
     ]],
     ['See your music', [
-      'Live VU needles, peak meters and a spectrum (display only — the sound is untouched)',
+      'A live spectrum (display only — the sound is untouched)',
       'The seek bar shows the track\'s waveform and moves smoothly',
       'Spectrogram of any track, to spot fake hi-res at a glance',
       'Ambient mode: TV mode shows your covers when nothing is playing',

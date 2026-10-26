@@ -25,7 +25,7 @@
   .bar { height: 6px; border-radius: 3px; background: #ffffff26; margin-top: 4vh; overflow: hidden; }
   #fill { height: 100%; width: 0; background: #c4b5fd; }
   .times { display: flex; justify-content: space-between; margin-top: 10px; font-size: clamp(12px, 1.7vh, 20px); opacity: .7; font-variant-numeric: tabular-nums; }
-  #meters { display: grid; grid-template-columns: 1fr 1fr; gap: 2vw; margin-top: 4vh; max-width: 640px; }
+  #meters { margin-top: 4vh; max-width: 640px; }
   #meters canvas { width: 100%; height: auto; }
   #lyrics { max-height: 76vh; overflow: hidden; display: flex; flex-direction: column; gap: 1.5vh; mask-image: linear-gradient(transparent, #000 15%, #000 85%, transparent); }
   .ly { font-size: clamp(16px, 2.6vh, 32px); opacity: .4; transition: opacity .3s, transform .3s; transform-origin: left; }
@@ -54,18 +54,18 @@
     <div id="album"></div>
     <div class="bar"><div id="fill"></div></div>
     <div class="times"><span id="pos">0:00</span><span id="quality"></span><span id="dur"></span></div>
-    <div id="meters" class="hidden"><canvas id="vuL" width="400" height="240"></canvas><canvas id="vuR" width="400" height="240"></canvas></div>
+    <div id="meters" class="hidden"><canvas id="spec" width="640" height="200"></canvas></div>
   </div>
   <div id="lyrics" class="hidden"></div>
 </main>
-<div id="tools"><button id="tMeters">Meters</button><button id="tLyrics" class="on">Lyrics</button><button id="tFull">Full screen</button></div>
+<div id="tools"><button id="tMeters">Spectrum</button><button id="tLyrics" class="on">Lyrics</button><button id="tFull">Full screen</button></div>
 <script>
 let pin = localStorage.getItem('hifi-pin') || '';
 const $ = (id) => document.getElementById(id);
 const clock = (s) => { if (s == null || !isFinite(s)) return ''; s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = String(s%60).padStart(2,'0'); return h ? `${h}:${String(m).padStart(2,'0')}:${x}` : `${m}:${x}`; };
 let showMeters = localStorage.getItem('screen-meters') === '1';
 let showLyrics = localStorage.getItem('screen-lyrics') !== '0';
-let state = null, lyrics = null, lyricsKey = '', base = { pos: 0, at: 0, playing: false }, vu = [-60, -60];
+let state = null, lyrics = null, lyricsKey = '', base = { pos: 0, at: 0, playing: false }, bands = [];
 
 async function api(path) {
   const r = await fetch(path, { headers: { 'X-Pin': pin } });
@@ -102,24 +102,26 @@ function renderLyrics() {
   $('main').classList.toggle('with-lyrics', !!on);
   el.innerHTML = on ? lyrics.synced.map(([t, l], i) => `<div class="ly" data-t="${t}">${(l || '♪').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</div>`).join('') : '';
 }
-function drawVu(cv, db) {
-  const g = cv.getContext('2d'), w = cv.width, h = cv.height;
+function drawSpectrum() {
+  const cv = $('spec'), g = cv.getContext('2d'), w = cv.width, h = cv.height;
   g.clearRect(0, 0, w, h);
-  g.fillStyle = '#f3e9cf'; g.beginPath(); g.roundRect(4, 4, w - 8, h - 8, 18); g.fill();
-  const pos = (vu) => Math.max(0, (Math.pow(10, Math.max(-40, Math.min(3, vu)) / 20) - 0.1) / (Math.pow(10, 3 / 20) - 0.1));
-  const cx = w / 2, cy = h - 16, r = h * 0.8;
-  const ang = (p) => (-50 + 100 * p) * Math.PI / 180;
-  g.lineWidth = 3;
-  for (const [a, b, col] of [[0, pos(0), '#2a2620'], [pos(0), 1, '#c0392b']]) { g.strokeStyle = col; g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2 + ang(a), -Math.PI / 2 + ang(b)); g.stroke(); }
-  g.fillStyle = '#2a2620'; g.font = 'bold 22px system-ui'; g.textAlign = 'center'; g.fillText('VU', cx, cy - r * 0.35);
-  const a = ang(pos(db + 18));
-  g.strokeStyle = '#111'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.sin(a) * r * 0.95, cy - Math.cos(a) * r * 0.95); g.stroke();
+  const n = bands.length || 48, bw = w / n;
+  bands.forEach((db, i) => {
+    const v = Math.max(0, Math.min(1, (db + 84) / 84));
+    const grad = g.createLinearGradient(0, h, 0, h - v * h);
+    grad.addColorStop(0, '#8b5cf6'); grad.addColorStop(1, '#c4b5fd');
+    g.fillStyle = grad;
+    g.fillRect(i * bw + 1, h - v * h, bw - 2, v * h);
+  });
 }
 async function meterLoop() {
+  let target = null;
   if (showMeters && state && state.status === 'playing') {
-    try { const m = await api('/api/meter'); const t = m ? m.rms : [-60, -60]; vu = vu.map((v, i) => v + (Math.max(t[i], -60) - v) * 0.25); } catch (_) {}
-  } else vu = vu.map((v) => v + (-60 - v) * 0.2);
-  if (showMeters) { drawVu($('vuL'), vu[0]); drawVu($('vuR'), vu[1]); }
+    try { const m = await api('/api/meter'); target = m ? m.spectrum : null; } catch (_) {}
+  }
+  if (!target) target = bands.map(() => -120);
+  bands = target.map((v, i) => Math.max(v, (bands[i] ?? -120) - 4));
+  if (showMeters) drawSpectrum();
   setTimeout(meterLoop, 66);
 }
 function frame() {

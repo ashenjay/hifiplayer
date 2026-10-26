@@ -857,9 +857,26 @@ async fn play_album(state: State<'_, AppState>, id: i64, start: usize, mode: Que
 
 #[tauri::command]
 async fn list_devices(state: State<'_, AppState>) -> Res<Vec<DeviceInfo>> {
-    let st = state.player.state();
-    let asio_busy = st.options.backend == hifiplayer::output::Backend::Asio && st.status != Status::Stopped;
-    blocking(move || Ok(output::list_devices(!asio_busy))).await
+    // Opening an ASIO driver to read its details can interrupt playback on the
+    // same DAC (even over WASAPI), so only probe while nothing plays and reuse
+    // the details from the last probe otherwise.
+    static ASIO_CACHE: Mutex<Vec<DeviceInfo>> = Mutex::new(Vec::new());
+    let idle = state.player.state().status == Status::Stopped;
+    blocking(move || {
+        let mut list = output::list_devices(idle);
+        let mut cache = ASIO_CACHE.lock().unwrap();
+        if idle {
+            *cache = list.iter().filter(|d| d.backend == hifiplayer::output::Backend::Asio).cloned().collect();
+        } else {
+            for d in list.iter_mut().filter(|d| d.backend == hifiplayer::output::Backend::Asio) {
+                if let Some(c) = cache.iter().find(|c| c.name == d.name) {
+                    d.details = c.details.clone();
+                }
+            }
+        }
+        Ok(list)
+    })
+    .await
 }
 
 #[tauri::command]
