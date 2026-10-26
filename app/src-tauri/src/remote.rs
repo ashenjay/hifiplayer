@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const PAGE: &str = include_str!("remote.html");
+const SCREEN: &str = include_str!("screen.html");
 
 pub struct Remote {
     server: Mutex<Option<Arc<Server>>>,
@@ -154,6 +155,13 @@ fn handle(mut req: Request, player: &Player, library: Option<&Library>, pin: &st
                 .with_header(header("Cache-Control", "no-store")),
         );
     }
+    if path == "/screen" {
+        return req.respond(
+            Response::from_string(SCREEN)
+                .with_header(header("Content-Type", "text/html; charset=utf-8"))
+                .with_header(header("Cache-Control", "no-store")),
+        );
+    }
     if path == "/manifest.json" {
         return req.respond(Response::from_string(MANIFEST).with_header(header("Content-Type", "application/manifest+json")));
     }
@@ -234,6 +242,12 @@ fn handle(mut req: Request, player: &Player, library: Option<&Library>, pin: &st
             let art = library.and_then(|l| l.album(id).ok().flatten()).and_then(|a| a.art_path);
             image_response(art.as_deref())
         }
+        (Method::Get, "/api/meter") => json_response(&serde_json::to_value(player.meter()).unwrap_or(Value::Null)),
+        (Method::Get, "/api/lyrics") => {
+            let st = player.state();
+            let item = st.live.clone().or_else(|| st.index.and_then(|i| st.queue.get(i).cloned()));
+            json_response(&serde_json::to_value(item.and_then(|i| lyrics_for(&i))).unwrap_or(Value::Null))
+        }
         (Method::Get, "/api/cover/current") => {
             // Only the art of the current queue item, never arbitrary paths.
             let st = player.state();
@@ -298,6 +312,22 @@ fn run(cmd: Cmd, player: &Player, library: Option<&Library>) -> Result<(), Strin
         Cmd::SetSleep { timer } => Command::SetSleep(timer),
     });
     Ok(())
+}
+
+/// The song's own lyrics, else LRCLIB when online lyrics are on (same rules as the app).
+fn lyrics_for(item: &hifiplayer::player::QueueItem) -> Option<hifiplayer::library::tags::Lyrics> {
+    use hifiplayer::source::Media;
+    if let Media::File { path, start, .. } = &item.media
+        && let Some(l) = hifiplayer::library::tags::read_lyrics(path, -start.unwrap_or(0.0))
+    {
+        return Some(l);
+    }
+    if matches!(item.media, Media::Radio { .. }) || !hifiplayer::settings::Settings::load().online.lyrics {
+        return None;
+    }
+    let artist = item.artist.as_deref().filter(|a| !a.trim().is_empty())?;
+    let text = hifiplayer::online::lrclib::find(artist, &item.title, item.album.as_deref(), item.duration).ok().flatten()?;
+    Some(hifiplayer::library::tags::parse(&text, "LRCLIB", 0.0))
 }
 
 fn image_response(path: Option<&str>) -> Response<std::io::Cursor<Vec<u8>>> {

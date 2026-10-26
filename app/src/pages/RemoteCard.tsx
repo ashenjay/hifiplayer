@@ -57,6 +57,8 @@ export function RemoteCard() {
             <div className="remote-url">{status.url}</div>
             <div className="muted small" style={{ marginTop: 12 }}>PIN</div>
             <div className="user-code">{status.pin}</div>
+            <div className="muted small" style={{ marginTop: 12 }}>Now Playing screen for a tablet or second screen</div>
+            <div className="remote-url small">{status.url}/screen</div>
             <div className="muted small" style={{ marginTop: 10 }}>
               If the phone can’t connect, allow HiFi Player through Windows Firewall for <b>private networks</b>{' '}
               (Windows asks the first time the remote is turned on).

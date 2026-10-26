@@ -5,7 +5,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  api, clock, currentItem, inTauri, listen,
+  api, clock, currentItem, imageSrc, inTauri, listen,
   type Album, type Lyrics, type PlayerState, type QueueItem, type TagEdit, type Track,
 } from '../api'
 import { useNav } from '../nav'
@@ -69,6 +69,19 @@ export function TvMode({ onClose }: { onClose: () => void }) {
   const lyrics = useLyrics(item)
   const colors = useCoverColors(item?.art)
   const [idle, setIdle] = useState(false)
+  // Ambient mode: a cover gallery after a minute with nothing playing (A toggles it).
+  const playing = player?.status === 'playing' || player?.status === 'loading'
+  const [ambient, setAmbient] = useState(false)
+  useEffect(() => {
+    if (playing) return setAmbient(false)
+    const t = window.setTimeout(() => setAmbient(true), 60_000)
+    return () => window.clearTimeout(t)
+  }, [playing])
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => e.key.toLowerCase() === 'a' && setAmbient((a) => !a)
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [])
 
   useEffect(() => {
     if (inTauri) getCurrentWindow().setFullscreen(true).catch(() => {})
@@ -109,7 +122,8 @@ export function TvMode({ onClose }: { onClose: () => void }) {
   return (
     <div className={`tv tinted${idle ? ' idle' : ''}`} style={coverTint(colors)}>
       <button className="icon-btn tv-close" title="Leave TV mode (Esc)" onClick={onClose}>{Icon.close}</button>
-      {item ? (
+      {ambient && <AmbientGallery />}
+      {ambient ? null : item ? (
         <div className={`tv-main${lyrics?.synced.length ? ' with-lyrics' : ''}`}>
           <div className="tv-art"><Cover src={item.art} title={item.album ?? item.title} /></div>
           <div className="tv-info">
@@ -392,4 +406,45 @@ export function useWhatsNewOnUpdate(): [boolean, () => void] {
     getVersion().then((v) => { try { localStorage.setItem('whatsNewSeen', v) } catch { /* ignore */ } }).catch(() => {})
   }
   return [show, close]
+}
+
+// ---- Ambient mode ------------------------------------------------------------------------
+
+/** Slow, cross-fading gallery of the library's covers. */
+function AmbientGallery() {
+  const [albums, setAlbums] = useState<Album[]>([])
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    api.albums().then((list) => {
+      const withArt = list.filter((a) => a.artPath)
+      for (let k = withArt.length - 1; k > 0; k--) {
+        const j = Math.floor(Math.random() * (k + 1))
+        ;[withArt[k], withArt[j]] = [withArt[j], withArt[k]]
+      }
+      setAlbums(withArt)
+    }).catch(() => {})
+  }, [])
+  useEffect(() => {
+    if (albums.length < 2) return
+    const t = window.setInterval(() => setI((x) => (x + 1) % albums.length), 12_000)
+    return () => window.clearInterval(t)
+  }, [albums])
+  if (!albums.length) return <div className="ambient"><div className="ambient-caption muted">Nothing playing</div></div>
+  const show = [albums[(i + albums.length - 1) % albums.length], albums[i]]
+  return (
+    <div className="ambient">
+      {show.map((a, k) => (
+        <div key={`${a.id}-${i}-${k}`} className={`ambient-slide${k === 1 ? ' in' : ' out'}`}>
+          <div className="ambient-bg" style={{ backgroundImage: `url("${imageSrc(a.artPath)}")` }} />
+          <img src={imageSrc(a.artPath)} alt="" />
+          {k === 1 && (
+            <div className="ambient-caption">
+              <div className="ambient-title">{a.title}</div>
+              <div className="muted">{a.artist}{a.year ? ` · ${a.year}` : ''}</div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
 }

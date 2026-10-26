@@ -496,3 +496,16 @@ kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-w
 .station-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 2px 0 6px; }
 .station-badges { display: flex; align-items: center; gap: 8px; }
 .heart-btn.small { padding: 0 6px; font-size: 14px; }
+
+/* Ambient mode (TV mode with nothing playing) */
+.ambient { position: absolute; inset: 0; overflow: hidden; }
+.ambient-slide { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.ambient-slide.in { animation: ambient-in 2.5s ease forwards; }
+.ambient-slide.out { animation: ambient-out 2.5s ease forwards; }
+.ambient-bg { position: absolute; inset: -10%; background: center/cover no-repeat; filter: blur(70px) brightness(0.35); }
+.ambient-slide img { position: relative; width: min(56vh, 70vw); aspect-ratio: 1; object-fit: cover; border-radius: 12px; box-shadow: 0 40px 120px #000d; animation: ambient-drift 14s ease-in-out forwards; }
+.ambient-caption { position: absolute; left: 6vw; bottom: 7vh; text-shadow: 0 2px 12px #000; }
+.ambient-title { font-size: clamp(22px, 3.4vh, 44px); font-weight: 700; }
+@keyframes ambient-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ambient-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes ambient-drift { from { transform: scale(1); } to { transform: scale(1.06) translateY(-1.5%); } }

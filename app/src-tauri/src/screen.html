@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#000000" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<link rel="icon" href="/icon.svg" />
+<title>HiFi Player — Now Playing</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: #f2f2f5; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; overflow: hidden; }
+  #bg { position: fixed; inset: -10%; background: #111 center/cover no-repeat; filter: blur(60px) brightness(0.35) saturate(1.3); transform: scale(1.1); transition: background-image 1s; }
+  #login { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; z-index: 5; background: #000; }
+  #login input { font: inherit; font-size: 28px; letter-spacing: .3em; text-align: center; width: 220px; padding: 10px; border-radius: 10px; border: 1px solid #333; background: #111; color: #fff; }
+  #login button { font: inherit; padding: 10px 26px; border-radius: 10px; border: none; background: #8b5cf6; color: #fff; font-weight: 600; }
+  .hidden { display: none !important; }
+  main { position: relative; height: 100%; display: grid; grid-template-columns: minmax(0, 46vh) minmax(0, 1fr); gap: 5vw; align-items: center; padding: 6vh 6vw; }
+  main.with-lyrics { grid-template-columns: minmax(0, 40vh) minmax(0, 1fr) minmax(0, 0.9fr); }
+  #art { width: 100%; aspect-ratio: 1; border-radius: 14px; background: #222 center/cover no-repeat; box-shadow: 0 30px 90px #000c; }
+  #title { font-size: clamp(26px, 5vh, 64px); font-weight: 700; line-height: 1.1; }
+  #artist { font-size: clamp(18px, 3vh, 38px); margin-top: 1.2vh; opacity: .9; }
+  #album { font-size: clamp(14px, 2.2vh, 26px); margin-top: .6vh; opacity: .6; }
+  .bar { height: 6px; border-radius: 3px; background: #ffffff26; margin-top: 4vh; overflow: hidden; }
+  #fill { height: 100%; width: 0; background: #c4b5fd; }
+  .times { display: flex; justify-content: space-between; margin-top: 10px; font-size: clamp(12px, 1.7vh, 20px); opacity: .7; font-variant-numeric: tabular-nums; }
+  #meters { display: grid; grid-template-columns: 1fr 1fr; gap: 2vw; margin-top: 4vh; max-width: 640px; }
+  #meters canvas { width: 100%; height: auto; }
+  #lyrics { max-height: 76vh; overflow: hidden; display: flex; flex-direction: column; gap: 1.5vh; mask-image: linear-gradient(transparent, #000 15%, #000 85%, transparent); }
+  .ly { font-size: clamp(16px, 2.6vh, 32px); opacity: .4; transition: opacity .3s, transform .3s; transform-origin: left; }
+  .ly.now { opacity: 1; font-weight: 600; transform: scale(1.04); }
+  #tools { position: fixed; right: 18px; bottom: 14px; display: flex; gap: 8px; opacity: 0; transition: opacity .3s; }
+  body.active #tools { opacity: 1; }
+  #tools button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 16px; border: 1px solid #ffffff40; background: #0008; color: #fff; }
+  #tools button.on { border-color: #c4b5fd; color: #c4b5fd; }
+  body:not(.active) { cursor: none; }
+  @media (max-aspect-ratio: 1/1) { main, main.with-lyrics { grid-template-columns: 1fr; align-content: center; } #art { max-width: 60vh; margin: 0 auto; } #lyrics { display: none; } }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<div id="login" class="hidden">
+  <div style="font-size:20px;font-weight:600">HiFi Player — Now Playing screen</div>
+  <div style="opacity:.6;font-size:14px">Enter the PIN from Settings → Remote control</div>
+  <input id="pin" inputmode="numeric" maxlength="6" />
+  <button id="go">Show</button>
+</div>
+<main id="main">
+  <div id="art"></div>
+  <div>
+    <div id="title">Nothing playing</div>
+    <div id="artist"></div>
+    <div id="album"></div>
+    <div class="bar"><div id="fill"></div></div>
+    <div class="times"><span id="pos">0:00</span><span id="quality"></span><span id="dur"></span></div>
+    <div id="meters" class="hidden"><canvas id="vuL" width="400" height="240"></canvas><canvas id="vuR" width="400" height="240"></canvas></div>
+  </div>
+  <div id="lyrics" class="hidden"></div>
+</main>
+<div id="tools"><button id="tMeters">Meters</button><button id="tLyrics" class="on">Lyrics</button><button id="tFull">Full screen</button></div>
+<script>
+let pin = localStorage.getItem('hifi-pin') || '';
+const $ = (id) => document.getElementById(id);
+const clock = (s) => { if (s == null || !isFinite(s)) return ''; s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = String(s%60).padStart(2,'0'); return h ? `${h}:${String(m).padStart(2,'0')}:${x}` : `${m}:${x}`; };
+let showMeters = localStorage.getItem('screen-meters') === '1';
+let showLyrics = localStorage.getItem('screen-lyrics') !== '0';
+let state = null, lyrics = null, lyricsKey = '', base = { pos: 0, at: 0, playing: false }, vu = [-60, -60];
+
+async function api(path) {
+  const r = await fetch(path, { headers: { 'X-Pin': pin } });
+  if (r.status === 401) { $('login').classList.remove('hidden'); throw new Error('pin'); }
+  return r.json();
+}
+$('go').onclick = async () => { pin = $('pin').value.trim(); try { await api('/api/state'); localStorage.setItem('hifi-pin', pin); $('login').classList.add('hidden'); } catch (_) {} };
+
+function current(s) { return s.live || (s.index != null ? s.queue[s.index] : null); }
+async function poll() {
+  try {
+    const s = await api('/api/state');
+    state = s;
+    const it = current(s);
+    const radio = it && it.media && it.media.kind === 'radio';
+    $('title').textContent = it ? (radio ? (s.streamTitle || it.title) : it.title) : 'Nothing playing';
+    $('artist').textContent = it ? (radio ? it.title : (it.artist || '')) : '';
+    $('album').textContent = it ? (radio ? (it.album || '') : (it.album || '')) : '';
+    $('quality').textContent = it && it.quality ? it.quality : '';
+    const art = it && it.art ? (/^https?:/.test(it.art) ? it.art : `/api/cover/current?pin=${encodeURIComponent(pin)}&k=${encodeURIComponent(it.title)}`) : '';
+    const bg = art ? `url("${art}")` : 'none';
+    if ($('art').dataset.bg !== bg) { $('art').style.backgroundImage = bg; $('bg').style.backgroundImage = bg; $('art').dataset.bg = bg; }
+    const playing = s.status === 'playing';
+    if (!playing || Math.abs(base.pos + (performance.now() - base.at) / 1000 - s.position) > 0.5) base = { pos: s.position, at: performance.now(), playing };
+    base.playing = playing;
+    const key = it ? JSON.stringify([it.media, it.title]) : '';
+    if (key !== lyricsKey) { lyricsKey = key; lyrics = null; renderLyrics(); if (it) api('/api/lyrics').then((l) => { if (lyricsKey === key) { lyrics = l; renderLyrics(); } }).catch(() => {}); }
+  } catch (_) {}
+}
+function renderLyrics() {
+  const el = $('lyrics');
+  const on = showLyrics && lyrics && lyrics.synced && lyrics.synced.length;
+  el.classList.toggle('hidden', !on);
+  $('main').classList.toggle('with-lyrics', !!on);
+  el.innerHTML = on ? lyrics.synced.map(([t, l], i) => `<div class="ly" data-t="${t}">${(l || '♪').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</div>`).join('') : '';
+}
+function drawVu(cv, db) {
+  const g = cv.getContext('2d'), w = cv.width, h = cv.height;
+  g.clearRect(0, 0, w, h);
+  g.fillStyle = '#f3e9cf'; g.beginPath(); g.roundRect(4, 4, w - 8, h - 8, 18); g.fill();
+  const pos = (vu) => Math.max(0, (Math.pow(10, Math.max(-40, Math.min(3, vu)) / 20) - 0.1) / (Math.pow(10, 3 / 20) - 0.1));
+  const cx = w / 2, cy = h - 16, r = h * 0.8;
+  const ang = (p) => (-50 + 100 * p) * Math.PI / 180;
+  g.lineWidth = 3;
+  for (const [a, b, col] of [[0, pos(0), '#2a2620'], [pos(0), 1, '#c0392b']]) { g.strokeStyle = col; g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2 + ang(a), -Math.PI / 2 + ang(b)); g.stroke(); }
+  g.fillStyle = '#2a2620'; g.font = 'bold 22px system-ui'; g.textAlign = 'center'; g.fillText('VU', cx, cy - r * 0.35);
+  const a = ang(pos(db + 18));
+  g.strokeStyle = '#111'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.sin(a) * r * 0.95, cy - Math.cos(a) * r * 0.95); g.stroke();
+}
+async function meterLoop() {
+  if (showMeters && state && state.status === 'playing') {
+    try { const m = await api('/api/meter'); const t = m ? m.rms : [-60, -60]; vu = vu.map((v, i) => v + (Math.max(t[i], -60) - v) * 0.25); } catch (_) {}
+  } else vu = vu.map((v) => v + (-60 - v) * 0.2);
+  if (showMeters) { drawVu($('vuL'), vu[0]); drawVu($('vuR'), vu[1]); }
+  setTimeout(meterLoop, 66);
+}
+function frame() {
+  const dur = state ? (state.duration || (current(state) || {}).duration || 0) : 0;
+  const pos = base.pos + (base.playing ? (performance.now() - base.at) / 1000 : 0);
+  $('fill').style.width = dur ? `${Math.min(100, pos / dur * 100)}%` : '0';
+  $('pos').textContent = state && current(state) ? clock(pos) : '';
+  $('dur').textContent = clock(dur);
+  if (lyrics && lyrics.synced) {
+    const lines = [...document.querySelectorAll('.ly')];
+    let cur = -1;
+    lines.forEach((l, i) => { if (+l.dataset.t <= pos + 0.2) cur = i; });
+    lines.forEach((l, i) => l.classList.toggle('now', i === cur));
+    if (cur >= 0) { const el = $('lyrics'), l = lines[cur]; el.scrollTop += (l.offsetTop - el.clientHeight / 2 - el.scrollTop) * 0.1; }
+  }
+  requestAnimationFrame(frame);
+}
+function tools() {
+  $('meters').classList.toggle('hidden', !showMeters);
+  $('tMeters').classList.toggle('on', showMeters);
+  $('tLyrics').classList.toggle('on', showLyrics);
+  renderLyrics();
+}
+$('tMeters').onclick = () => { showMeters = !showMeters; localStorage.setItem('screen-meters', showMeters ? '1' : '0'); tools(); };
+$('tLyrics').onclick = () => { showLyrics = !showLyrics; localStorage.setItem('screen-lyrics', showLyrics ? '1' : '0'); tools(); };
+$('tFull').onclick = () => document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+let idle; document.addEventListener('pointermove', () => { document.body.classList.add('active'); clearTimeout(idle); idle = setTimeout(() => document.body.classList.remove('active'), 3000); });
+if (!pin) $('login').classList.remove('hidden');
+tools(); poll(); setInterval(poll, 1000); meterLoop(); requestAnimationFrame(frame);
+// Keep the tablet's screen on while showing music.
+if (navigator.wakeLock) { const lock = () => navigator.wakeLock.request('screen').catch(() => {}); lock(); document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && lock()); }
+</script>
+</body>
+</html>
