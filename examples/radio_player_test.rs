@@ -92,9 +92,14 @@ fn main() -> anyhow::Result<()> {
     println!("  {}", st.signal_path.as_ref().map(|p| format!("{} → {}", p.source, p.output)).unwrap_or_default());
     check("bit-perfect", st.signal_path.as_ref().is_some_and(|p| p.bit_perfect));
     check("song title from the stream", wait(3.0, &|s| s.stream_title.as_deref().is_some_and(|t| t.starts_with("Test Artist - Tone"))));
-    sleep(Duration::from_millis(500));
-    let m = player.meter();
-    check("meters show the tone (about -30 dBFS)", m.as_ref().is_some_and(|m| (m.peak[0] + 30.0).abs() < 2.0));
+    // Radio buffers ~1.5 s before sound starts.
+    let t = Instant::now();
+    let mut ok = false;
+    while t.elapsed() < Duration::from_secs(3) && !ok {
+        ok = player.meter().is_some_and(|m| (m.peak[0] + 30.0).abs() < 2.0);
+        sleep(Duration::from_millis(100));
+    }
+    check("meters show the tone (about -30 dBFS)", ok);
 
     // The station hangs up: the player reconnects and keeps playing.
     let reconnected = wait(12.0, &|_| connections.load(std::sync::atomic::Ordering::Relaxed) >= 2)

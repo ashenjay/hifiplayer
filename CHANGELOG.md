@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-27
+
+### Added
+- **Lossless internet radio:** a Radio page with built-in FLAC stations (Radio Paradise mixes, Naim Radio, ČRo Jazz and Classical, Radio BluesFlac, Radio Calico, Rondo Classic), search in the radio-browser.info directory with a "lossless only" filter, and favourite stations. Lossless stations play bit-perfect; song titles are shown; a dropped station reconnects by itself.
+- **AirPlay receiver:** iPhones, iPads and Macs can pick HiFi Player as a speaker (Settings → Online & network). Audio arrives as Apple Lossless 16/44.1 and plays bit-perfect; the sender's volume is ignored. Track info and cover art are shown, and HiFi Player's buttons control the sender.
+- **Live meters (display only):** VU needles, peak meters with peak hold, and a spectrum on Now Playing and in TV mode (V cycles). DSD is metered through a separate display-only conversion; the DAC still gets the DSD untouched.
+- **Waveform seek bar** for local files.
+- **Spectrogram** of any track from the album's analysis details.
+- **Now Playing screen** for a tablet or second screen at the phone remote's address + `/screen`, with meters and synced lyrics.
+- **Ambient mode:** TV mode shows a slow gallery of album covers when nothing is playing (A toggles).
+
+### Fixed
+- Switching the output device (for example ASIO to WASAPI) while Spotify played paused Spotify; it now carries on on the new device, trying the fallback device if needed.
+- Spotify could skip through songs or stop responding to the phone when no output was taking its audio.
+- Spotify is paused in the app when the output stops by itself (DAC unplugged).
+- DSD files sent through DLNA no longer stop downloading after 20 seconds.
+
 ## [1.2.3] - 2026-10-25
 
 ### Fixed
@@ -84,7 +101,8 @@ First public release.
 - Spotify streams are Ogg Vorbis 320 kbps (not lossless).
 - Full Qobuz/Tidal streaming needs partner API access from those services.
 
-[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ashenjay/hifiplayer/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/ashenjay/hifiplayer/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/ashenjay/hifiplayer/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/ashenjay/hifiplayer/compare/v1.2.0...v1.2.1

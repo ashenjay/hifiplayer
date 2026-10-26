@@ -279,6 +279,13 @@ fn player_meter(state: State<'_, AppState>) -> Option<hifiplayer::meter::MeterRe
     state.player.meter()
 }
 
+/// Spectrogram of a library track (for spotting fake hi-res by eye).
+#[tauri::command]
+async fn track_spectrogram(state: State<'_, AppState>, id: i64) -> Res<hifiplayer::spectrogram::Spectrogram> {
+    let track = state.library.lock().unwrap().track(id).map_err(anyhow_err)?.ok_or("track not found")?;
+    blocking(move || hifiplayer::spectrogram::spectrogram(&track.media()).map_err(anyhow_err)).await
+}
+
 /// Waveform overview for the seek bar (local files only).
 #[tauri::command]
 async fn track_waveform(item: QueueItem) -> Res<Option<Vec<u8>>> {
@@ -1239,6 +1246,7 @@ pub fn run() {
             play_station,
             player_meter,
             track_waveform,
+            track_spectrogram,
             library_tracks,
             edit_tags,
             items_for_paths,

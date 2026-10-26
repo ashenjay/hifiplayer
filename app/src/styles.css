@@ -509,3 +509,12 @@ kbd { background: var(--panel-2); border: 1px solid var(--line); border-bottom-w
 @keyframes ambient-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes ambient-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes ambient-drift { from { transform: scale(1); } to { transform: scale(1.06) translateY(-1.5%); } }
+
+/* Spectrogram */
+.spectro-card { max-width: 920px; }
+.spectro { display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
+.spectro-axis { display: flex; flex-direction: column; justify-content: space-between; font-size: 11px; color: var(--muted); text-align: right; }
+.spectro-plot { position: relative; }
+.spectro-plot canvas { display: block; width: 100%; height: 300px; image-rendering: auto; border-radius: 6px; }
+.spectro-mark { position: absolute; left: 0; right: 0; border-top: 1px dashed #ffffff55; pointer-events: none; }
+.spectro-mark span { position: absolute; right: 4px; top: -15px; font-size: 10px; color: #fff; text-shadow: 0 1px 3px #000; }

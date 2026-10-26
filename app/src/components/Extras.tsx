@@ -340,32 +340,22 @@ export function TagEditor({ ids, album, onClose }: { ids: number[]; album?: Albu
 // ---- What's new -------------------------------------------------------------------------
 
 const WHATS_NEW: { version: string; groups: [string, string[]][] } = {
-  version: '1.2.0',
+  version: '1.3.0',
   groups: [
-    ['Playback', [
-      'Repeat, shuffle, sleep timer, and the queue is remembered between sessions',
-      'DST-compressed DSD and SACD ISO images, multichannel albums (stereo layer)',
-      'Shows the rate your DAC runs at, and tells you when it changes',
-      'Device switcher, per-device settings, a fallback device and a bit-perfect self-test',
+    ['New ways to listen', [
+      'Lossless internet radio: Radio Paradise in FLAC and many more, with station search and favourites',
+      'AirPlay: iPhones, iPads and Macs can play through HiFi Player, bit-perfect on your DAC',
+      'A Now Playing screen for a tablet or second screen, from the phone remote',
     ]],
-    ['Library', [
-      'Playlists, favourites, ratings, history and listening stats',
-      'Cue sheets, album versions, typo-tolerant search and genre / decade browsing',
-      'Audio analysis: dynamic range, loudness and fake hi-res detection',
-      'Lyrics (from .lrc files or tags) and a tag editor',
-      'Booklets and artwork, MQA display, DSD-to-FLAC converter',
+    ['See your music', [
+      'Live VU needles, peak meters and a spectrum (display only — the sound is untouched)',
+      'The seek bar shows the track\'s waveform and moves smoothly',
+      'Spectrogram of any track, to spot fake hi-res at a glance',
+      'Ambient mode: TV mode shows your covers when nothing is playing',
     ]],
-    ['Look and feel', [
-      'Light, black (OLED) and midnight themes, accent colours and cover-art colours',
-      'Mini player, TV mode, and taskbar play / pause / next buttons',
-      'Drop files or folders on the window to play them; drag tracks in the queue to reorder',
-    ]],
-    ['Discover and connect', [
-      'Radio mixes, similar albums and “On this day” from your own library',
-      'Missing covers and artist biographies from MusicBrainz and Wikipedia',
-      'Scrobbling to ListenBrainz and Last.fm, and your status on Discord',
-      'DLNA: play from phone and NAS apps, or share your library with TVs and streamers',
-      'Phone remote: search, playlists, radio, queue editing, shuffle, repeat and sleep timer',
+    ['Fixed', [
+      'Spotify keeps playing when you switch between ASIO and WASAPI devices',
+      'Spotify could skip songs or stop answering when the output was busy',
     ]],
   ],
 }

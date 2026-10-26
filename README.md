@@ -64,6 +64,7 @@
 - **Now Playing:** full-screen view plus a bar with a seek bar and a quality badge.
 - **Themes:** dark, light, black (OLED) and midnight, accent colours and colours from the cover art.
 - **TV mode, mini player, synced lyrics and a tag editor.**
+- **Live VU / peak meters and spectrum, waveform seek bar and spectrograms** (display only).
 - **Keyboard:** Space to play/pause, Alt+â† to go back.
 
 </td>
@@ -72,6 +73,8 @@
 ### ðŸŸ¢ Streaming & Remote
 - **Spotify Connect:** pick "HiFi Player" as a speaker in any Spotify app; it plays through the same ASIO / WASAPI output.
 - **Phone remote:** a browser remote on your Wi-Fi (scan a QR code, enter the PIN) with now playing, transport, queue and album browsing.
+- **Lossless internet radio:** Radio Paradise FLAC and more, played bit-perfect.
+- **AirPlay:** iPhones, iPads and Macs can play through HiFi Player.
 - **DLNA / UPnP:** play from phone and NAS apps through HiFi Player, or share your library with TVs and streamers.
 - **Qobuz & TIDAL:** screens for users who have partner API access.
 

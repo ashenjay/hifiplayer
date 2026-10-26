@@ -14,6 +14,7 @@ pub mod output;
 pub mod player;
 pub mod settings;
 pub mod source;
+pub mod spectrogram;
 pub mod spotify;
 pub mod streaming;
 pub mod testsignal;

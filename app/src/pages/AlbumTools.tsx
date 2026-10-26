@@ -1,7 +1,7 @@
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openPath } from '@tauri-apps/plugin-opener'
-import { useEffect, useState } from 'react'
-import { api, clock, imageSrc, inTauri, listen, verdictBadge, type Album, type AlbumExtra, type TrackAnalysis, type Verdict } from '../api'
+import { useEffect, useRef, useState } from 'react'
+import { api, clock, imageSrc, inTauri, invoke, listen, verdictBadge, type Album, type AlbumExtra, type TrackAnalysis, type Verdict } from '../api'
 import { useNav } from '../nav'
 
 const isDsd = (a: Album) => /DSD|SACD|DST/i.test(a.quality)
@@ -214,13 +214,15 @@ export function AlbumAnalysis({ album }: { album: Album }) {
 }
 
 function AnalysisDetails({ rows, onClose }: { rows: TrackAnalysis[]; onClose: () => void }) {
+  const [spectro, setSpectro] = useState<TrackAnalysis['track'] | null>(null)
+  if (spectro) return <SpectrogramView track={spectro} onClose={() => setSpectro(null)} />
   return (
     <div className="overlay" onClick={onClose}>
       <div className="overlay-card" onClick={(e) => e.stopPropagation()}>
         <h2>Audio analysis</h2>
         <table className="analysis-table">
           <thead>
-            <tr><th>Track</th><th>Length</th><th>DR</th><th>LUFS</th><th>Peak</th><th>Real bits</th><th>Content to</th><th>Verdict</th></tr>
+            <tr><th>Track</th><th>Length</th><th>DR</th><th>LUFS</th><th>Peak</th><th>Real bits</th><th>Content to</th><th>Verdict</th><th></th></tr>
           </thead>
           <tbody>
             {rows.map(({ track, analysis: a }) => {
@@ -235,6 +237,7 @@ function AnalysisDetails({ rows, onClose }: { rows: TrackAnalysis[]; onClose: ()
                   <td>{a?.bitsUsed ?? '–'}</td>
                   <td>{a?.cutoffHz != null ? `${(a.cutoffHz / 1000).toFixed(1)} kHz` : '–'}</td>
                   <td>{b ? <span className={`badge badge-${b.tone === 'plain' ? 'cd' : b.tone}`} title={b.title}>{b.text}</span> : 'Not analysed'}</td>
+                  <td><button className="link-btn small" onClick={() => setSpectro(track)}>Spectrogram</button></td>
                 </tr>
               )
             })}
@@ -243,6 +246,89 @@ function AnalysisDetails({ rows, onClose }: { rows: TrackAnalysis[]; onClose: ()
         <p className="muted small">
           DR uses the TT Dynamic Range method; LUFS is EBU R128 integrated loudness. "Content to" is the highest
           frequency with real music, which reveals upsampled or MP3-sourced files.
+        </p>
+        <button onClick={onClose}>Close</button>
+      </div>
+    </div>
+  )
+}
+
+// ---- Spectrogram ---------------------------------------------------------------------------
+
+interface SpectrogramData {
+  width: number
+  height: number
+  topHz: number
+  duration: number
+  data: number[]
+}
+
+/** dB colour scale: black → purple → red → yellow → white. */
+function heat(v: number): [number, number, number] {
+  const t = v / 255
+  const stops: [number, [number, number, number]][] = [
+    [0, [0, 0, 4]], [0.3, [40, 11, 84]], [0.5, [120, 28, 109]], [0.65, [187, 55, 84]],
+    [0.8, [237, 105, 37]], [0.92, [251, 180, 26]], [1, [252, 255, 164]],
+  ]
+  for (let i = 1; i < stops.length; i++) {
+    const [t1, c1] = stops[i]
+    const [t0, c0] = stops[i - 1]
+    if (t <= t1) {
+      const k = (t - t0) / (t1 - t0)
+      return [0, 1, 2].map((j) => Math.round(c0[j] + (c1[j] - c0[j]) * k)) as [number, number, number]
+    }
+  }
+  return stops[stops.length - 1][1]
+}
+
+export function SpectrogramView({ track, onClose }: { track: { id: number; title: string; quality: string }; onClose: () => void }) {
+  const [spec, setSpec] = useState<SpectrogramData>()
+  const [error, setError] = useState<string>()
+  const canvas = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    invoke<SpectrogramData>('track_spectrogram', { id: track.id }).then(setSpec).catch((e) => setError(String(e)))
+  }, [track.id])
+  useEffect(() => {
+    if (!spec || !canvas.current) return
+    const ctx = canvas.current.getContext('2d')!
+    const img = ctx.createImageData(spec.width, spec.height)
+    spec.data.forEach((v, i) => {
+      const [r, g, b] = heat(v)
+      img.data[i * 4] = r
+      img.data[i * 4 + 1] = g
+      img.data[i * 4 + 2] = b
+      img.data[i * 4 + 3] = 255
+    })
+    ctx.putImageData(img, 0, 0)
+  }, [spec])
+  // On hi-res scales 20 and 22.05 kHz would sit on top of each other.
+  const marks = spec ? [16000, spec.topHz > 40000 ? 0 : 20000, 22050, 48000, 96000].filter((f) => f > 0 && f < spec.topHz * 0.98) : []
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="overlay-card spectro-card" onClick={(e) => e.stopPropagation()}>
+        <h2>Spectrogram <span className="muted small">· {track.title} · {track.quality}</span></h2>
+        {error && <div className="warn">{error}</div>}
+        {!spec && !error && <div className="muted">Reading the whole track…</div>}
+        {spec && (
+          <div className="spectro">
+            <div className="spectro-axis">
+              <span>{(spec.topHz / 1000).toFixed(spec.topHz % 1000 ? 1 : 0)} kHz</span>
+              <span>0</span>
+            </div>
+            <div className="spectro-plot">
+              <canvas ref={canvas} width={spec.width} height={spec.height} />
+              {marks.map((f) => (
+                <div key={f} className="spectro-mark" style={{ top: `${(1 - f / spec.topHz) * 100}%` }}>
+                  <span>{f === 22050 ? '22.05' : f / 1000} kHz</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <p className="muted small">
+          Time runs left to right, frequency bottom to top; brighter means louder. Real hi-res shows music above
+          22 kHz. A hard edge at 16–20 kHz means an MP3/AAC source; nothing above 22 kHz in a hi-res file means it
+          was upsampled from CD.
         </p>
         <button onClick={onClose}>Close</button>
       </div>

@@ -55,6 +55,16 @@ const tracksFull = tracks.map((t) => ({ ...t, rating: t.trackNo === 1 ? 5 : 0, f
 
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
   album_extras: () => [],
+  track_spectrogram: () => {
+    const w = 800, h = 256
+    const data = Array.from({ length: w * h }, (_, i) => {
+      const row = Math.floor(i / w), col = i % w
+      const f = 1 - row / h
+      const base = f < 0.2 ? 170 - f * 300 : 30
+      return Math.max(0, Math.min(255, Math.round(base + 40 * Math.sin(col / 23) * (f < 0.2 ? 1 : 0.2) + Math.random() * 20)))
+    })
+    return { width: w, height: h, topHz: 96000, duration: 391, data }
+  },
   radio_featured: () => [
     { id: '', name: 'Radio Paradise – Main Mix', url: 'x1', country: 'United States', tags: ['eclectic', 'rock'], codec: 'FLAC', bitrate: 0, lossless: true },
     { id: '', name: 'Radio Paradise – Mellow Mix', url: 'x2', country: 'United States', tags: ['mellow'], codec: 'FLAC', bitrate: 0, lossless: true },
