@@ -338,6 +338,7 @@ pub fn start(index: usize, media: &Media, start_secs: f64, opts: &PlayOptions, n
         // One second of audio in the ring buffer; live Spotify audio uses a
         // quarter second so pause and seek in the Spotify app react quickly.
         let secs = if matches!(source, Source::Live(_)) { 0.25 } else { 1.0 };
+        // Radio: no seeking, and a full second absorbs network jitter.
         let capacity = ((plan.frame_rate() * secs) as usize * plan.channels()).max(4096);
         let (producer, consumer) = RingBuffer::<i32>::new(capacity);
         match output::start(opts.backend, opts.device.clone(), plan.stream_format(), consumer, ctrl.clone()) {
@@ -424,8 +425,8 @@ fn produce(
         if !pump(&mut track.source, plan, src_ch, &mut prod, &ctrl, &mut conv, &mut pushed, limit, &mut feed)? {
             return Ok(()); // stopped
         }
-        if matches!(track.source, Source::Live(_)) {
-            // Spotify manages its own queue; the live stream just ended.
+        if matches!(track.source, Source::Live(_) | Source::Radio(_)) {
+            // Spotify manages its own queue; a live stream just ended.
             return Ok(());
         }
         // Find the next playable track.
@@ -495,6 +496,17 @@ fn pump(
         return Ok(true);
     }
     match source {
+        Source::Radio(s) => {
+            while s.read(&mut out, &|| ctrl.stopped())? {
+                keep_channels(&mut out, src_ch, channels as usize);
+                feed.push_pcm(*pushed, &out, channels as usize);
+                if !push_all(prod, &out, ctrl) {
+                    return Ok(false);
+                }
+                *pushed += out.len() as u64 / channels;
+            }
+            return Ok(!ctrl.stopped());
+        }
         Source::Live(s) => {
             while s.read(&mut out, &|| ctrl.stopped())? {
                 feed.push_pcm(*pushed, &out, channels as usize);

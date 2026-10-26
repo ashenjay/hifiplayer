@@ -33,6 +33,8 @@ pub struct Settings {
     pub fallback: Option<PlayOptions>,
     pub appearance: Appearance,
     pub online: OnlineSettings,
+    /// Favourite internet radio stations.
+    pub radio_favorites: Vec<crate::online::radio::Station>,
 }
 
 /// Optional network features (accounts live in the encrypted secrets store).

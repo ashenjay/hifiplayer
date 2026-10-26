@@ -402,6 +402,60 @@ async fn show_main_window(app: tauri::AppHandle) {
     desktop::show_main(&app);
 }
 
+// ---- Internet radio -----------------------------------------------------------------------
+
+use hifiplayer::online::radio::{self as radio_dir, Station};
+
+#[tauri::command]
+fn radio_featured() -> Vec<Station> {
+    radio_dir::featured()
+}
+
+/// Search the radio-browser.info directory (empty query: popular lossless stations).
+#[tauri::command]
+async fn radio_search(query: String, lossless_only: bool) -> Res<Vec<Station>> {
+    blocking(move || radio_dir::search(&query, lossless_only).map_err(anyhow_err)).await
+}
+
+#[tauri::command]
+fn radio_favorites(state: State<'_, AppState>) -> Vec<Station> {
+    state.settings.lock().unwrap().radio_favorites.clone()
+}
+
+#[tauri::command]
+fn radio_set_favorite(state: State<'_, AppState>, station: Station, on: bool) -> Res<Vec<Station>> {
+    let mut s = state.settings.lock().unwrap();
+    s.radio_favorites.retain(|f| f.url != station.url);
+    if on {
+        s.radio_favorites.push(station);
+    }
+    s.save().map_err(anyhow_err)?;
+    Ok(s.radio_favorites.clone())
+}
+
+#[tauri::command]
+fn play_station(state: State<'_, AppState>, station: Station) {
+    let id = station.id.clone();
+    std::thread::spawn(move || radio_dir::count_click(&id));
+    let quality = if station.lossless {
+        "Radio FLAC".to_string()
+    } else if station.bitrate > 0 {
+        format!("Radio {} {} kbps", station.codec, station.bitrate)
+    } else {
+        format!("Radio {}", station.codec)
+    };
+    let item = QueueItem {
+        media: Media::Radio { url: station.url },
+        title: station.name,
+        artist: None,
+        album: station.country,
+        art: station.logo,
+        duration: None,
+        quality: Some(quality),
+    };
+    state.player.send(Command::PlayQueue { items: vec![item], start: 0 });
+}
+
 // ---- Discovery: similar albums, radio, on this day ------------------------------------
 
 #[tauri::command]
@@ -1130,6 +1184,11 @@ pub fn run() {
             asio_control_panel,
             self_test,
             track_lyrics,
+            radio_featured,
+            radio_search,
+            radio_favorites,
+            radio_set_favorite,
+            play_station,
             player_meter,
             track_waveform,
             library_tracks,

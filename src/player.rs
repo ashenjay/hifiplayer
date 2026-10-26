@@ -68,6 +68,8 @@ pub struct PlayerState {
     pub last_dropout: Option<String>,
     /// Device to use when the chosen one isn't available.
     pub fallback: Option<PlayOptions>,
+    /// What an internet radio station says is playing ("Artist – Title").
+    pub stream_title: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,6 +183,7 @@ impl Player {
             dropouts_session: 0,
             last_dropout: None,
             fallback: None,
+            stream_title: None,
         }));
         let (tx, rx) = mpsc::channel();
         let st = state.clone();
@@ -329,6 +332,8 @@ fn format_rate(p: &SignalPath) -> String {
 struct Reconnect {
     index: usize,
     position: f64,
+    /// A radio station dropped (not the audio device).
+    radio: bool,
     next_try: Instant,
     give_up: Instant,
 }
@@ -773,12 +778,15 @@ impl Control {
             return;
         }
         let (index, position, give_up) = (r.index, r.position, r.give_up);
+        let radio = r.radio;
         match self.start_once(index, position) {
             Ok(()) => {
                 self.reconnect = None;
                 let mut st = self.state.lock().unwrap();
                 st.reconnecting = false;
-                st.error = Some("The audio device is back, playback continues.".into());
+                if !radio {
+                    st.error = Some("The audio device is back, playback continues.".into());
+                }
             }
             Err(e) if Instant::now() >= give_up => {
                 self.reconnect = None;
@@ -786,7 +794,11 @@ impl Control {
                 st.reconnecting = false;
                 st.status = Status::Stopped;
                 st.position = position;
-                st.error = Some(format!("The audio device did not come back: {e:#}"));
+                st.error = Some(if radio {
+                    format!("The station is not reachable: {e:#}")
+                } else {
+                    format!("The audio device did not come back: {e:#}")
+                });
             }
             Err(_) => {
                 if let Some(r) = &mut self.reconnect {
@@ -952,13 +964,38 @@ impl Control {
             st.position = pos.secs;
             st.duration = pos.duration.or(st.duration);
             record_dropouts(&mut st, p.underruns());
+            st.stream_title = match self.queue.lock().unwrap().get(pos.index).map(|q| &q.media) {
+                Some(Media::Radio { url }) => crate::source::radio::now_title(url),
+                _ => None,
+            };
         }
         if !p.is_finished() {
             return;
         }
         let played = pos;
         let p = self.current.take().unwrap();
-        match p.wait() {
+        let result = p.wait();
+        // A radio stream never ends on its own: it dropped or changed format, so start it again.
+        let radio = matches!(
+            self.queue.lock().unwrap().get(played.index).map(|q| &q.media),
+            Some(Media::Radio { .. })
+        );
+        if radio && !matches!(result, Ok(Some(_))) {
+            let mut st = self.state.lock().unwrap();
+            st.reconnecting = true;
+            st.status = Status::Loading;
+            st.signal_path = None;
+            drop(st);
+            self.reconnect = Some(Reconnect {
+                index: played.index,
+                position: 0.0,
+                radio: true,
+                next_try: Instant::now() + Duration::from_millis(500),
+                give_up: Instant::now() + Duration::from_secs(60),
+            });
+            return;
+        }
+        match result {
             Ok(Some((next, _))) => {
                 let before = self.last_rate;
                 let Some(next) = self.order.lock().unwrap().resolve(next) else {
@@ -1007,6 +1044,7 @@ impl Control {
                 self.reconnect = Some(Reconnect {
                     index: played.index,
                     position: played.secs,
+                    radio: false,
                     next_try: Instant::now() + Duration::from_secs(2),
                     give_up: Instant::now() + Duration::from_secs(60),
                 });

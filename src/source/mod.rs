@@ -3,6 +3,7 @@
 pub mod dsdfile;
 pub mod http;
 pub mod pcm;
+pub mod radio;
 pub mod sacd;
 
 use std::fmt;
@@ -33,6 +34,8 @@ pub enum Media {
     },
     /// Live audio from the Spotify Connect receiver.
     Spotify,
+    /// An internet radio station (an endless stream).
+    Radio { url: String },
 }
 
 /// Where to fetch a streaming track right now (URLs usually expire).
@@ -113,6 +116,7 @@ pub enum Source {
     Dsd(dsdfile::DsdSource),
     Sacd(sacd::SacdSource),
     Live(crate::spotify::LiveSource),
+    Radio(radio::RadioSource),
 }
 
 impl Source {
@@ -141,6 +145,7 @@ impl Source {
                 Ok(Source::Pcm(src))
             }
             Media::Spotify => Ok(Source::Live(crate::spotify::LiveSource::open()?)),
+            Media::Radio { url } => Ok(Source::Radio(radio::RadioSource::open(url)?)),
             Media::Url { url, mime } => {
                 let ext = url_ext(url, mime.as_deref());
                 if ext == "dsf" || ext == "dff" {
@@ -158,8 +163,8 @@ impl Source {
             Source::Pcm(s) => s.seek(secs),
             Source::Dsd(s) => s.seek(secs),
             Source::Sacd(s) => s.seek(secs),
-            // Spotify seeks on its side (see spotify::remote).
-            Source::Live(_) => Ok(()),
+            // Spotify seeks on its side (see spotify::remote); radio is live.
+            Source::Live(_) | Source::Radio(_) => Ok(()),
         }
     }
 
@@ -169,6 +174,7 @@ impl Source {
             Source::Dsd(s) => s.format(),
             Source::Sacd(s) => s.format(),
             Source::Live(_) => SourceFormat::Pcm { rate: 44_100, channels: 2, bits: 24 },
+            Source::Radio(s) => s.format(),
         }
     }
 
@@ -179,6 +185,7 @@ impl Source {
             Source::Dsd(s) => s.container_name(),
             Source::Sacd(s) => s.codec_name(),
             Source::Live(_) => "Spotify Ogg Vorbis 320 kbps",
+            Source::Radio(s) => &s.codec_name,
         }
     }
 
@@ -188,7 +195,7 @@ impl Source {
             Source::Pcm(s) => s.duration_secs(),
             Source::Dsd(s) => Some(s.duration_secs()),
             Source::Sacd(s) => Some(s.duration_secs()),
-            Source::Live(_) => None,
+            Source::Live(_) | Source::Radio(_) => None,
         }
     }
 }
@@ -217,7 +224,13 @@ fn url_ext(url: &str, mime: Option<&str>) -> String {
 
 fn download_temp(url: &str, ext: &str) -> Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("hifiplayer-upnp.{ext}"));
-    let mut resp = crate::streaming::agent().get(url).call().map_err(|e| anyhow!("download failed: {e}"))?;
+    // No overall time limit: a DSD file can take a while on Wi-Fi.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_connect(Some(std::time::Duration::from_secs(10)))
+        .http_status_as_error(false)
+        .build()
+        .into();
+    let mut resp = agent.get(url).call().map_err(|e| anyhow!("download failed: {e}"))?;
     if resp.status().as_u16() >= 400 {
         return Err(anyhow!("download failed: HTTP {}", resp.status()));
     }

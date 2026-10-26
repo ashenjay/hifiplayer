@@ -3,4 +3,5 @@
 pub mod discord;
 pub mod lrclib;
 pub mod musicbrainz;
+pub mod radio;
 pub mod scrobble;

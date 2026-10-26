@@ -146,6 +146,10 @@ fn scrobble_of(item: &hifiplayer::player::QueueItem, duration: Option<f64>) -> O
     if !hifiplayer::online::scrobble::enabled() {
         return None;
     }
+    // A radio station's name is not a song.
+    if matches!(item.media, hifiplayer::source::Media::Radio { .. }) {
+        return None;
+    }
     let duration = duration.or(item.duration);
     if duration.is_some_and(|d| d < 30.0) {
         return None;

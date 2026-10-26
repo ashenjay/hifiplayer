@@ -151,6 +151,8 @@ export type Media =
   | { kind: 'file'; path: string; start?: number; end?: number }
   | { kind: 'stream'; service: string; id: string }
   | { kind: 'spotify' }
+  | { kind: 'radio'; url: string }
+  | { kind: 'url'; url: string; mime?: string | null }
 
 export interface RemoteStatus {
   enabled: boolean
@@ -224,6 +226,8 @@ export interface PlayerState {
   sleep?: { endOfTrack: boolean; remaining?: number | null } | null
   /** The DAC went away; the player is waiting for it. */
   reconnecting: boolean
+  /** What an internet radio station says is playing. */
+  streamTitle?: string | null
   /** A one-off message ("DAC switched to DSD128"); noticeId changes for each new one. */
   notice?: string | null
   noticeId: number
@@ -245,7 +249,23 @@ export interface DesktopSettings {
 export function currentItem(p?: PlayerState | null): QueueItem | undefined {
   if (!p) return undefined
   if (p.live) return p.live
-  return p.index != null ? p.queue[p.index] : undefined
+  const item = p.index != null ? p.queue[p.index] : undefined
+  // Radio: the station is the "album", the song it announces the subtitle.
+  if (item?.media.kind === 'radio') return { ...item, artist: p.streamTitle ?? item.album, album: item.title }
+  return item
+}
+
+export interface Station {
+  id: string
+  name: string
+  url: string
+  homepage?: string | null
+  logo?: string | null
+  country?: string | null
+  tags: string[]
+  codec: string
+  bitrate: number
+  lossless: boolean
 }
 
 export interface DeviceInfo {
@@ -502,6 +522,11 @@ export const api = {
   lastfmStartLogin: () => invoke<[string, string]>('lastfm_start_login'),
   lastfmFinishLogin: (token: string) => invoke<string | null>('lastfm_finish_login', { token }),
   scrobbleDisconnect: (service: 'listenbrainz' | 'lastfm') => invoke<void>('scrobble_disconnect', { service }),
+  radioFeatured: () => invoke<Station[]>('radio_featured'),
+  radioSearch: (query: string, losslessOnly: boolean) => invoke<Station[]>('radio_search', { query, losslessOnly }),
+  radioFavorites: () => invoke<Station[]>('radio_favorites'),
+  radioSetFavorite: (station: Station, on: boolean) => invoke<Station[]>('radio_set_favorite', { station, on }),
+  playStation: (station: Station) => invoke<void>('play_station', { station }),
   setStreamQuality: (quality: StreamQuality) => invoke<void>('set_stream_quality', { quality }),
   setDesktop: (desktop: DesktopSettings) => invoke<void>('set_desktop', { desktop }),
 

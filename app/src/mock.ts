@@ -55,6 +55,17 @@ const tracksFull = tracks.map((t) => ({ ...t, rating: t.trackNo === 1 ? 5 : 0, f
 
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
   album_extras: () => [],
+  radio_featured: () => [
+    { id: '', name: 'Radio Paradise – Main Mix', url: 'x1', country: 'United States', tags: ['eclectic', 'rock'], codec: 'FLAC', bitrate: 0, lossless: true },
+    { id: '', name: 'Radio Paradise – Mellow Mix', url: 'x2', country: 'United States', tags: ['mellow'], codec: 'FLAC', bitrate: 0, lossless: true },
+    { id: '', name: 'ČRo Jazz', url: 'x3', country: 'Czechia', tags: ['jazz'], codec: 'FLAC', bitrate: 0, lossless: true },
+    { id: '', name: 'Naim Radio', url: 'x4', country: 'United Kingdom', tags: ['audiophile'], codec: 'FLAC', bitrate: 0, lossless: true },
+  ],
+  radio_search: () => [
+    { id: 'a', name: 'Radio BluesFlac', url: 'y1', country: 'United States', tags: ['blues'], codec: 'FLAC', bitrate: 1500, lossless: true },
+    { id: 'b', name: 'Jazz FM', url: 'y2', country: 'United Kingdom', tags: ['jazz'], codec: 'MP3', bitrate: 128, lossless: false },
+  ],
+  radio_favorites: () => [],
   player_meter: () => {
     const t = performance.now() / 1000
     const lvl = -14 + 6 * Math.sin(t * 1.7) + 3 * Math.sin(t * 5.3)

@@ -74,7 +74,7 @@ fn compute(media: &Media) -> Result<Vec<u8>> {
                 conv.as_mut().unwrap().process(&bytes, &mut pcm);
                 m
             }
-            Source::Live(_) => bail!("live streams have no waveform"),
+            Source::Live(_) | Source::Radio(_) => bail!("live streams have no waveform"),
         };
         if !more {
             break;

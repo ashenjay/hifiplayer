@@ -10,6 +10,7 @@ import { AlbumPage, AlbumsPage, ArtistPage, ArtistsPage, SearchPage } from './pa
 import { NowPlayingPage, QueuePage } from './pages/Player'
 import { SettingsPage } from './pages/Settings'
 import { SpotifyPage } from './pages/Spotify'
+import { RadioPage } from './pages/Radio'
 import { ServicePage, StreamAlbumPage, StreamArtistPage } from './pages/Streaming'
 import { DropZone, TagEditor, TvMode, WhatsNew, useWhatsNewOnUpdate } from './components/Extras'
 import { useAppearance } from './theme'
@@ -30,6 +31,7 @@ function Page({ view }: { view: View }) {
     case 'search': return <SearchPage query={view.query} />
     case 'service': return <ServicePage service={view.service} />
     case 'spotify': return <SpotifyPage />
+    case 'radio': return <RadioPage />
     case 'streamAlbum': return <StreamAlbumPage service={view.service} id={view.id} />
     case 'streamArtist': return <StreamArtistPage service={view.service} id={view.id} />
     case 'queue': return <QueuePage />
@@ -45,7 +47,8 @@ const sections: { view: View; label: string; icon: React.ReactNode; gap?: boolea
   { view: { name: 'browse' }, label: 'Browse', icon: Icon.grid },
   { view: { name: 'playlists' }, label: 'Playlists', icon: Icon.list },
   { view: { name: 'favorites' }, label: 'Favourites', icon: Icon.heart },
-  { view: { name: 'spotify' }, label: 'Spotify', icon: Icon.cloud, gap: true },
+  { view: { name: 'radio' }, label: 'Radio', icon: Icon.radio, gap: true },
+  { view: { name: 'spotify' }, label: 'Spotify', icon: Icon.cloud },
   { view: { name: 'service', service: 'qobuz' }, label: 'Qobuz', icon: Icon.cloud },
   { view: { name: 'service', service: 'tidal' }, label: 'Tidal', icon: Icon.cloud },
   { view: { name: 'queue' }, label: 'Queue', icon: Icon.queue, gap: true },

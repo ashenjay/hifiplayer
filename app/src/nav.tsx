@@ -16,6 +16,7 @@ export type View =
   | { name: 'search'; query: string }
   | { name: 'service'; service: 'qobuz' | 'tidal' }
   | { name: 'spotify' }
+  | { name: 'radio' }
   | { name: 'streamAlbum'; service: string; id: string }
   | { name: 'streamArtist'; service: string; id: string }
   | { name: 'queue' }
