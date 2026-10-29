@@ -9,3 +9,8 @@ was unchanged), so a song on a page not yet loaded could not be found and the
 command failed, leaving the old song playing. Now the context is loaded again
 when the tapped track is missing, a uid is matched through the command's own
 page uri, and a fallback index past the loaded tracks no longer fails the load.
+
+Main fix (src/model.rs): the Spotify app sends skip_to with an empty track_uri
+next to a valid track_uid. The empty uri was used, never matched, and every
+tap fell back to the first track. Empty strings now count as not provided.
+src/spirc.rs also logs each play command and the selected track (info level).

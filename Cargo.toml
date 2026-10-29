@@ -15,6 +15,7 @@ ctrlc = "3.5.2"
 flacenc = "0.5.1"
 futures-util = "0.3.34"
 librespot-connect = "0.8"
+log = { version = "0.4", features = ["std"] }
 librespot-core = "0.8"
 librespot-metadata = "0.8"
 librespot-oauth = "0.8"

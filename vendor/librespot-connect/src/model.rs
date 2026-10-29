@@ -135,9 +135,13 @@ impl TryFrom<SkipTo> for PlayingTrack {
     fn try_from(value: SkipTo) -> Result<Self, Self::Error> {
         // order of checks is important, as the index can be 0, but still has an uid or uri provided,
         // so we only use the index as last resort
-        if let Some(uri) = value.track_uri {
+        // HiFi Player patch: the Spotify app sends an empty track_uri next to a
+        // valid track_uid, so empty strings count as not provided.
+        let uri = value.track_uri.filter(|s| !s.is_empty());
+        let uid = value.track_uid.filter(|s| !s.is_empty());
+        if let Some(uri) = uri {
             Ok(PlayingTrack::Uri(uri))
-        } else if let Some(uid) = value.track_uid {
+        } else if let Some(uid) = uid {
             Ok(PlayingTrack::Uid(uid))
         } else if let Some(index) = value.track_index {
             Ok(PlayingTrack::Index(index))

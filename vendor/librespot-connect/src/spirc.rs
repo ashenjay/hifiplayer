@@ -1003,6 +1003,15 @@ impl SpircTask {
                 return self.notify().await;
             }
             Play(mut play) => {
+                info!(
+                    "play command: context <{:?}> url <{:?}> skip_to <{:?}> pages {} (tracks {}) first page tracks {:?}",
+                    play.context.uri,
+                    play.context.url,
+                    play.options.skip_to,
+                    play.context.pages.len(),
+                    play.context.pages.iter().map(|p| p.tracks.len()).sum::<usize>(),
+                    play.context.pages.first().map(|p| p.tracks.iter().take(3).map(|t| (t.uri.clone(), t.uid.clone())).collect::<Vec<_>>()),
+                );
                 if !self.connect_state.is_active() {
                     self.handle_activate()
                 }
@@ -1333,6 +1342,13 @@ impl SpircTask {
             }
         }
 
+        info!(
+            "selecting {:?}: context has {} tracks, more pages: {}, first {:?}",
+            cmd_options.playing_track,
+            self.connect_state.get_context(ContextType::Default).map(|c| c.tracks.len()).unwrap_or_default(),
+            self.context_resolver.has_next(),
+            self.connect_state.get_context(ContextType::Default).ok().and_then(|c| c.tracks.first()).map(|t| (t.uri.clone(), t.uid.clone())),
+        );
         let index = match cmd_options.playing_track {
             None => None,
             Some(ref playing_track) => Some(match playing_track {
@@ -1409,6 +1425,7 @@ impl SpircTask {
             self.add_autoplay_resolving_when_required();
         }
 
+        info!("selected index {:?} -> {}", index, self.connect_state.current_track(|t| t.uri.clone()));
         if self.connect_state.current_track(MessageField::is_some) {
             self.load_track(cmd_options.start_playing, cmd_options.seek_to)?;
         } else {
