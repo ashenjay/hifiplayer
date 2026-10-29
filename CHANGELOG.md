@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-10-29
+
+### Fixed
+- Spotify Connect: after the first song, tapping another song in the same playlist kept playing the same song. The playlist is now loaded again when the tapped song isn't there yet (fix in the bundled librespot-connect).
+
 ## [1.3.2] - 2026-10-29
 
 ### Fixed
