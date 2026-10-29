@@ -1003,6 +1003,15 @@ impl SpircTask {
                 return self.notify().await;
             }
             Play(mut play) => {
+                info!(
+                    "play command: context <{:?}> url <{:?}> skip_to <{:?}> pages {} (tracks {}) first page tracks {:?}",
+                    play.context.uri,
+                    play.context.url,
+                    play.options.skip_to,
+                    play.context.pages.len(),
+                    play.context.pages.iter().map(|p| p.tracks.len()).sum::<usize>(),
+                    play.context.pages.first().map(|p| p.tracks.iter().take(3).map(|t| (t.uri.clone(), t.uid.clone())).collect::<Vec<_>>()),
+                );
                 if !self.connect_state.is_active() {
                     self.handle_activate()
                 }
@@ -1283,6 +1292,11 @@ impl SpircTask {
         self.connect_state.reset_options();
 
         let autoplay = matches!(cmd.context_options, Some(LoadContextOptions::Autoplay));
+        let context_uri = match cmd.context {
+            PlayContext::Uri(ref uri) => Some(uri.clone()),
+            PlayContext::Tracks(_) => None,
+        };
+        let page_copy = page.clone();
         match cmd.context {
             PlayContext::Uri(uri) => {
                 self.load_context_from_uri(uri, page.as_ref(), autoplay)
@@ -1310,25 +1324,31 @@ impl SpircTask {
         // yet, fetch further pages until it is, instead of silently falling back
         // to the first track of the playlist.
         if let Some(ref playing_track) = cmd_options.playing_track {
-            let deadline = std::time::Instant::now() + Duration::from_secs(15);
-            for _ in 0..200 {
-                let found = match self.connect_state.get_context(ContextType::Default) {
-                    Ok(ctx) => match playing_track {
-                        PlayingTrack::Index(_) => true,
-                        PlayingTrack::Uri(uri) => ConnectState::find_index_in_context(ctx, |t| &t.uri == uri).is_ok(),
-                        PlayingTrack::Uid(uid) => ConnectState::find_index_in_context(ctx, |t| &t.uid == uid).is_ok(),
-                    },
-                    Err(_) => true,
-                };
-                if found || !self.context_resolver.has_next() || std::time::Instant::now() > deadline {
-                    break;
+            self.fetch_pages_until_loaded(playing_track).await;
+            // A second tap in the same playlist reuses the context loaded before,
+            // whose page fetching is already used up. Load it again from scratch
+            // so the tapped track can still be found.
+            if !self.track_loaded(playing_track) {
+                if let Some(uri) = context_uri.clone() {
+                    debug!("selected track not in the loaded context, loading it again");
+                    self.connect_state.reset_context(ResetContext::Completely);
+                    self.load_context_from_uri(uri, page_copy.as_ref(), autoplay)
+                        .await?;
+                    self.connect_state.set_active_context(ContextType::Default);
+                    self.connect_state.merge_context(page_copy.clone());
+                    self.connect_state.clear_next_tracks();
+                    self.fetch_pages_until_loaded(playing_track).await;
                 }
-                debug!("selected track not loaded yet, fetching the next context page");
-                let next = self.context_resolver.get_next_context(Vec::new).await;
-                self.handle_next_context(next);
             }
         }
 
+        info!(
+            "selecting {:?}: context has {} tracks, more pages: {}, first {:?}",
+            cmd_options.playing_track,
+            self.connect_state.get_context(ContextType::Default).map(|c| c.tracks.len()).unwrap_or_default(),
+            self.context_resolver.has_next(),
+            self.connect_state.get_context(ContextType::Default).ok().and_then(|c| c.tracks.first()).map(|t| (t.uri.clone(), t.uid.clone())),
+        );
         let index = match cmd_options.playing_track {
             None => None,
             Some(ref playing_track) => Some(match playing_track {
@@ -1339,7 +1359,20 @@ impl SpircTask {
                 }
                 PlayingTrack::Uid(uid) => {
                     let ctx = self.connect_state.get_context(ContextType::Default)?;
-                    ConnectState::find_index_in_context(ctx, |t| &t.uid == uid)
+                    ConnectState::find_index_in_context(ctx, |t| &t.uid == uid).or_else(|e| {
+                        // HiFi Player patch: the uid may differ from the loaded
+                        // context; the command's own page says which uri it means.
+                        let uri = page_copy
+                            .as_ref()
+                            .and_then(|p| p.tracks.iter().find(|t| t.uid.as_deref() == Some(uid.as_str())))
+                            .and_then(|t| t.uri.clone());
+                        match uri {
+                            Some(uri) if !uri.is_empty() => {
+                                ConnectState::find_index_in_context(ctx, |t| t.uri == uri)
+                            }
+                            _ => Err(e),
+                        }
+                    })
                 }
             }),
         }
@@ -1349,7 +1382,14 @@ impl SpircTask {
                     "Failed to resolve index by {:?}, using fallback index: {:?} (Error: {why})",
                     cmd_options.playing_track, fallback_index
                 );
-                fallback_index.unwrap_or_default()
+                // HiFi Player patch: an index past the loaded tracks used to fail
+                // the whole command, so the old song simply kept playing.
+                let len = self
+                    .connect_state
+                    .get_context(ContextType::Default)
+                    .map(|c| c.tracks.len())
+                    .unwrap_or_default();
+                fallback_index.filter(|i| *i < len).unwrap_or_default()
             })
         });
 
@@ -1385,6 +1425,7 @@ impl SpircTask {
             self.add_autoplay_resolving_when_required();
         }
 
+        info!("selected index {:?} -> {}", index, self.connect_state.current_track(|t| t.uri.clone()));
         if self.connect_state.current_track(MessageField::is_some) {
             self.load_track(cmd_options.start_playing, cmd_options.seek_to)?;
         } else {
@@ -1393,6 +1434,38 @@ impl SpircTask {
         }
 
         Ok(())
+    }
+
+    /// HiFi Player patch: whether the selected track is in the loaded context.
+    fn track_loaded(&self, playing_track: &PlayingTrack) -> bool {
+        match self.connect_state.get_context(ContextType::Default) {
+            Ok(ctx) => match playing_track {
+                PlayingTrack::Index(_) => true,
+                PlayingTrack::Uri(uri) => {
+                    ConnectState::find_index_in_context(ctx, |t| &t.uri == uri).is_ok()
+                }
+                PlayingTrack::Uid(uid) => {
+                    ConnectState::find_index_in_context(ctx, |t| &t.uid == uid).is_ok()
+                }
+            },
+            Err(_) => true,
+        }
+    }
+
+    /// HiFi Player patch: fetch further context pages until the selected track is loaded.
+    async fn fetch_pages_until_loaded(&mut self, playing_track: &PlayingTrack) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        for _ in 0..200 {
+            if self.track_loaded(playing_track)
+                || !self.context_resolver.has_next()
+                || std::time::Instant::now() > deadline
+            {
+                break;
+            }
+            debug!("selected track not loaded yet, fetching the next context page");
+            let next = self.context_resolver.get_next_context(Vec::new).await;
+            self.handle_next_context(next);
+        }
     }
 
     async fn load_context_from_uri(

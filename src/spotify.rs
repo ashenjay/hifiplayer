@@ -264,6 +264,7 @@ async fn connect_inner(credentials: Credentials) -> Result<()> {
     // librespot stores reusable credentials in its cache; we move them into
     // the DPAPI-encrypted secrets store right after connecting.
     let cache_dir = data_dir()?.join("spotify");
+    start_log(&cache_dir);
     let cache = Cache::new(Some(&cache_dir), None, None, None).map_err(|e| anyhow!("{e}"))?;
 
     let device_id = match Secrets::get("spotify.device_id") {
@@ -459,6 +460,32 @@ impl Drop for LiveSource {
             if slot.is_none() {
                 *slot = Some(rx);
             }
+        }
+    }
+}
+
+/// Writes Spotify Connect messages to spotify/connect-log.txt (newest run only),
+/// so problems with song selection can be looked into.
+fn start_log(dir: &std::path::Path) {
+    struct FileLog(Mutex<std::fs::File>);
+    impl log::Log for FileLog {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            m.target().starts_with("librespot_connect") && m.level() <= log::Level::Debug
+                || m.target().starts_with("librespot") && m.level() <= log::Level::Info
+        }
+        fn log(&self, r: &log::Record) {
+            if self.enabled(r.metadata()) {
+                use std::io::Write;
+                let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                let _ = writeln!(self.0.lock().unwrap(), "{}.{:03} {} {}: {}", t.as_secs(), t.subsec_millis(), r.level(), r.target(), r.args());
+            }
+        }
+        fn flush(&self) {}
+    }
+    let _ = std::fs::create_dir_all(dir);
+    if let Ok(f) = std::fs::File::create(dir.join("connect-log.txt")) {
+        if log::set_boxed_logger(Box::new(FileLog(Mutex::new(f)))).is_ok() {
+            log::set_max_level(log::LevelFilter::Debug);
         }
     }
 }

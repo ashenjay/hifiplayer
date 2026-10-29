@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-10-29
+
+### Fixed
+- Spotify Connect: tapping any song in a playlist (for example Liked Songs) always played the playlist's first song. The Spotify app sends an empty song link next to the song's ID, and the empty link was used; now the ID picks the right song (fix in the bundled librespot-connect).
+- Spotify Connect: tapping another song in the playlist that is already playing could keep the old song playing.
+
+### Added
+- A Spotify Connect log (`%LOCALAPPDATA%\hifiplayer\spotify\connect-log.txt`, newest session only) to help look into Spotify problems.
+
 ## [1.3.2] - 2026-10-29
 
 ### Fixed
