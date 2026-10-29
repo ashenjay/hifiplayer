@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-29
+
+### Fixed
+- Spotify Connect: tapping a song in a big playlist (for example Liked Songs) started the playlist's first song instead. The rest of the playlist is now fetched until the tapped song is found (fix in the bundled librespot-connect).
+
 ## [1.3.1] - 2026-10-27
 
 ### Fixed
@@ -109,7 +114,8 @@ First public release.
 - Spotify streams are Ogg Vorbis 320 kbps (not lossless).
 - Full Qobuz/Tidal streaming needs partner API access from those services.
 
-[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/ashenjay/hifiplayer/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/ashenjay/hifiplayer/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/ashenjay/hifiplayer/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/ashenjay/hifiplayer/compare/v1.2.3...v1.3.0
 [1.2.3]: https://github.com/ashenjay/hifiplayer/compare/v1.2.2...v1.2.3

@@ -1,6 +1,6 @@
 [package]
 name = "hifiplayer"
-version = "1.3.1"
+version = "1.3.2"
 edition = "2024"
 description = "Bit-perfect Windows music player with WASAPI Exclusive, ASIO and native DSD"
 
@@ -43,3 +43,8 @@ rand = "0.8"
 opt-level = 3
 lto = "thin"
 codegen-units = 1
+
+# librespot-connect 0.8.0 with a fix: tapping a song deep in a big playlist
+# (e.g. Liked Songs) started the first song instead. See vendor/librespot-connect.
+[patch.crates-io]
+librespot-connect = { path = "vendor/librespot-connect" }

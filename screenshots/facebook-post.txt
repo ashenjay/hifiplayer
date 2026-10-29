@@ -1,0 +1,29 @@
+🎧 HiFi Player 1.3 — a FREE bit-perfect music player for Windows
+
+I've been building a free, open-source audiophile player for Windows, and version 1.3 is out!
+
+✅ 100% bit-perfect: ASIO and WASAPI Exclusive, no mixer, no volume tricks
+✅ Native DSD (DSD64–DSD512), DoP, DST and SACD ISO
+✅ Spotify Connect — play from your phone, through your DAC
+✅ AirPlay — iPhone / iPad / Mac straight to your DAC, lossless
+✅ Lossless internet radio — Radio Paradise FLAC and many more
+✅ Synced lyrics, TV mode, live spectrum, waveform seek bar
+✅ Phone remote + a full-screen "Now Playing" page for a tablet
+✅ Your library: playlists, favourites, cover art, artist bios, DR / fake hi-res check
+
+No ads, no account, no subscription. Free for everyone (GPL-3.0).
+
+📥 Download: https://github.com/ashenjay/hifiplayer/releases
+
+Feedback and bug reports are very welcome! 🙏
+
+#audiophile #hifi #DSD #DAC #musicplayer #lossless
+
+--- Photo captions (one per screenshot) ---
+01-home.png — Your music library with album covers and quality badges (DSD, SACD, FLAC hi-res).
+02-now-playing.png — Now Playing with synced lyrics and a waveform seek bar.
+03-tv-mode.png — TV mode: full-screen cover and lyrics for the living room.
+04-radio.png — Lossless internet radio: Radio Paradise FLAC and more, bit-perfect.
+05-airplay-settings.png — AirPlay, Spotify Connect, Discord, scrobbling, DLNA — all optional.
+06-spectrum.png — Live spectrum that shows the music without touching the sound.
+07-whats-new.png — What's new in 1.3.
