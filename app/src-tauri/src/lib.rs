@@ -987,8 +987,9 @@ async fn qobuz_browser_login(app: tauri::AppHandle, state: State<'_, AppState>) 
         hifiplayer::streaming::qobuz::Qobuz::set_credentials(APP_ID, app_secret).map_err(anyhow_err)?;
         let server = tiny_http::Server::http("127.0.0.1:0").map_err(err)?;
         let port = server.server_addr().to_ip().ok_or_else(|| "Could not allocate a local OAuth callback port".to_string())?.port();
-        let redirect = format!("http%3A%2F%2F127.0.0.1%3A{port}%2Fcallback");
-        let login_url = format!("https://www.qobuz.com/signin/oauth?ext_app_id={APP_ID}&redirect_url={redirect}");
+        let redirect = format!("http://127.0.0.1:{port}/callback");
+        let redirect_encoded = redirect.replace(':', "%3A").replace('/', "%2F");
+        let login_url = format!("https://www.qobuz.com/signin/oauth?ext_app_id={APP_ID}&redirect_url={redirect_encoded}");
         let webview = tauri::WebviewWindowBuilder::new(&app, "qobuz-login", tauri::WebviewUrl::External(login_url.parse().map_err(err)?))
             .title("Sign in to Qobuz")
             .inner_size(520.0, 760.0)
@@ -1244,6 +1245,7 @@ pub fn run() {
             set_stream_quality,
             services_status,
             qobuz_set_credentials,
+            qobuz_browser_login,
             qobuz_login,
             tidal_set_credentials,
             tidal_start_login,
