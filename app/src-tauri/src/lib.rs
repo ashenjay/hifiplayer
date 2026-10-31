@@ -981,6 +981,10 @@ async fn qobuz_browser_login(app: tauri::AppHandle, state: State<'_, AppState>) 
         let private_key = option_env!("QOBUZ_OAUTH_PRIVATE_KEY")
             .filter(|v| !v.trim().is_empty())
             .ok_or_else(|| "Qobuz browser login is not enabled in this build (OAuth signing key is not configured).".to_string())?;
+        let app_secret = option_env!("QOBUZ_APP_SECRET")
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| "Qobuz browser login is not enabled in this build (stream signing key is not configured).".to_string())?;
+        hifiplayer::streaming::qobuz::Qobuz::set_credentials(APP_ID, app_secret).map_err(anyhow_err)?;
         let server = tiny_http::Server::http("127.0.0.1:0").map_err(err)?;
         let port = server.server_addr().to_ip().ok_or_else(|| "Could not allocate a local OAuth callback port".to_string())?.port();
         let redirect = format!("http%3A%2F%2F127.0.0.1%3A{port}%2Fcallback");
