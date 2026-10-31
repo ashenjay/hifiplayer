@@ -974,6 +974,37 @@ async fn qobuz_set_credentials(app_id: String, app_secret: String) -> Res<()> {
 }
 
 #[tauri::command]
+async fn qobuz_browser_login(app: tauri::AppHandle, state: State<'_, AppState>) -> Res<AccountStatus> {
+    let services = state.services.clone();
+    blocking(move || {
+        const APP_ID: &str = "304027809";
+        let private_key = option_env!("QOBUZ_OAUTH_PRIVATE_KEY")
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| "Qobuz browser login is not enabled in this build (OAuth signing key is not configured).".to_string())?;
+        let server = tiny_http::Server::http("127.0.0.1:0").map_err(err)?;
+        let port = server.server_addr().to_ip().ok_or("Could not allocate a local OAuth callback port")?.port();
+        let redirect = format!("http://127.0.0.1:{port}/callback");
+        let login_url = format!("https://www.qobuz.com/signin/oauth?ext_app_id={APP_ID}&redirect_url={}", urlencoding::encode(&redirect));
+        let webview = tauri::WebviewWindowBuilder::new(&app, "qobuz-login", tauri::WebviewUrl::External(login_url.parse().map_err(err)?))
+            .title("Sign in to Qobuz")
+            .inner_size(520.0, 760.0)
+            .build()
+            .map_err(err)?;
+        let request = server.recv_timeout(Duration::from_secs(300)).map_err(err)?
+            .ok_or("Qobuz sign-in timed out. Please try again.")?;
+        let url = request.url().to_string();
+        let parsed = url::Url::parse(&format!("http://127.0.0.1{url}")).map_err(err)?;
+        let code = parsed.query_pairs().find(|(k, _)| k == "code_autorisation")
+            .map(|(_, v)| v.into_owned()).ok_or("Qobuz did not return an authorization code")?;
+        let response = tiny_http::Response::from_string("Qobuz connected. You can return to HiFi Player.")
+            .with_header("Content-Type: text/plain; charset=utf-8".parse::<tiny_http::Header>().map_err(err)?);
+        let _ = request.respond(response);
+        let _ = webview.close();
+        services.qobuz.login_with_oauth(&code, private_key).map_err(anyhow_err)
+    }).await
+}
+
+#[tauri::command]
 async fn qobuz_login(state: State<'_, AppState>, email: String, password: String) -> Res<AccountStatus> {
     let s = state.services.clone();
     blocking(move || s.qobuz.login(&email, &password).map_err(anyhow_err)).await
