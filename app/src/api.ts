@@ -534,6 +534,7 @@ export const api = {
   setDesktop: (desktop: DesktopSettings) => invoke<void>('set_desktop', { desktop }),
 
   servicesStatus: () => invoke<AccountStatus[]>('services_status'),
+  qobuzBrowserLogin: () => invoke<AccountStatus>('qobuz_browser_login'),
   qobuzSetCredentials: (appId: string, appSecret: string) => invoke<void>('qobuz_set_credentials', { appId, appSecret }),
   qobuzLogin: (email: string, password: string) => invoke<AccountStatus>('qobuz_login', { email, password }),
   tidalSetCredentials: (clientId: string, clientSecret: string) =>

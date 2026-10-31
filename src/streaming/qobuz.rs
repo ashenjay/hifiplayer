@@ -68,6 +68,34 @@ impl Qobuz {
         })
     }
 
+    /// Complete a Qobuz browser OAuth exchange and persist the returned session.
+    pub fn login_with_oauth(&self, code: &str, private_key: &str) -> Result<AccountStatus> {
+        let app_id = Self::app_id().context("Qobuz OAuth app ID is not configured in this build")?;
+        let callback = self.agent
+            .get(format!("{BASE}oauth/callback"))
+            .header("X-App-Id", &app_id)
+            .query("code", code)
+            .query("private_key", private_key);
+        let data = json(callback.call())?;
+        let token = s(&data, "token").context("Qobuz OAuth did not return an authentication token")?;
+        let user_id = s(&data, "user_id").context("Qobuz OAuth did not return a user ID")?;
+        let profile = json(self.agent
+            .post(format!("{BASE}user/login"))
+            .header("X-App-Id", &app_id)
+            .header("X-User-Auth-Token", &token)
+            .header("Content-Type", "text/plain;charset=UTF-8")
+            .send("extra=partner"))?;
+        let user = &profile["user"];
+        let name = s(user, "display_name").or_else(|| s(user, "login")).unwrap_or_else(|| user_id.clone());
+        let plan = user["credential"]["parameters"]["short_label"].as_str().map(str::to_string);
+        let hires = user["credential"]["parameters"]["hires_streaming"].as_bool().unwrap_or(false);
+        Secrets::set("qobuz.token", Some(&token))?;
+        Secrets::set("qobuz.user", Some(&name))?;
+        Secrets::set("qobuz.plan", plan.as_deref())?;
+        Secrets::set("qobuz.hires", Some(if hires { "1" } else { "0" }))?;
+        Ok(self.status())
+    }
+
     /// Log in with the user's Qobuz email (or username) and password.
     pub fn login(&self, email: &str, password: &str) -> Result<AccountStatus> {
         let hash = format!("{:x}", md5::compute(password.as_bytes()));

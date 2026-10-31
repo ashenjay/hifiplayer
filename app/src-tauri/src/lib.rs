@@ -974,6 +974,43 @@ async fn qobuz_set_credentials(app_id: String, app_secret: String) -> Res<()> {
 }
 
 #[tauri::command]
+async fn qobuz_browser_login(app: tauri::AppHandle, state: State<'_, AppState>) -> Res<AccountStatus> {
+    let services = state.services.clone();
+    blocking(move || {
+        const APP_ID: &str = "304027809";
+        let private_key = option_env!("QOBUZ_OAUTH_PRIVATE_KEY")
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| "Qobuz browser login is not enabled in this build (OAuth signing key is not configured).".to_string())?;
+        let app_secret = option_env!("QOBUZ_APP_SECRET")
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| "Qobuz browser login is not enabled in this build (stream signing key is not configured).".to_string())?;
+        hifiplayer::streaming::qobuz::Qobuz::set_credentials(APP_ID, app_secret).map_err(anyhow_err)?;
+        let server = tiny_http::Server::http("127.0.0.1:0").map_err(err)?;
+        let port = server.server_addr().to_ip().ok_or_else(|| "Could not allocate a local OAuth callback port".to_string())?.port();
+        let redirect = format!("http://127.0.0.1:{port}/callback");
+        let redirect_encoded = redirect.replace(':', "%3A").replace('/', "%2F");
+        let login_url = format!("https://www.qobuz.com/signin/oauth?ext_app_id={APP_ID}&redirect_url={redirect_encoded}");
+        let webview = tauri::WebviewWindowBuilder::new(&app, "qobuz-login", tauri::WebviewUrl::External(login_url.parse().map_err(err)?))
+            .title("Sign in to Qobuz")
+            .inner_size(520.0, 760.0)
+            .build()
+            .map_err(err)?;
+        let request = server.recv_timeout(Duration::from_secs(300)).map_err(err)?
+            .ok_or_else(|| "Qobuz sign-in timed out. Please try again.".to_string())?;
+        let callback = request.url().to_string();
+        let code = callback.split('?').nth(1).unwrap_or("").split('&')
+            .filter_map(|part| part.split_once('='))
+            .find(|(key, _)| *key == "code_autorisation")
+            .map(|(_, value)| value.to_string())
+            .ok_or_else(|| "Qobuz did not return an authorization code".to_string())?;
+        let response = tiny_http::Response::from_string("Qobuz connected. You can return to HiFi Player.");
+        let _ = request.respond(response);
+        let _ = webview.close();
+        services.qobuz.login_with_oauth(&code, private_key).map_err(anyhow_err)
+    }).await
+}
+
+#[tauri::command]
 async fn qobuz_login(state: State<'_, AppState>, email: String, password: String) -> Res<AccountStatus> {
     let s = state.services.clone();
     blocking(move || s.qobuz.login(&email, &password).map_err(anyhow_err)).await
@@ -1208,6 +1245,7 @@ pub fn run() {
             set_stream_quality,
             services_status,
             qobuz_set_credentials,
+            qobuz_browser_login,
             qobuz_login,
             tidal_set_credentials,
             tidal_start_login,

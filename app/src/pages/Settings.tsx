@@ -562,52 +562,49 @@ function Credentials({ fields, onSave }: { fields: [string, string, boolean][]; 
 
 function QobuzCard({ account, onChange }: { account: AccountStatus; onChange: () => void }) {
   const { toast } = useNav()
-  const [editCreds, setEditCreds] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const browserLogin = async () => {
+    setBusy(true)
+    try {
+      await api.qobuzBrowserLogin()
+      toast('Connected to Qobuz')
+      onChange()
+    } catch (e) {
+      toast(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="service-card">
       <AccountHeader name="Qobuz" account={account} onLogout={() => api.logout('qobuz').then(onChange)} />
-      {(!account.configured || editCreds) ? (
-        <Credentials
-          fields={[['App ID', 'Qobuz API app ID', false], ['App secret', 'Qobuz API app secret', true]]}
-          onSave={async ([id, secret]) => {
-            try {
-              await api.qobuzSetCredentials(id, secret)
-              setEditCreds(false)
-              onChange()
-            } catch (e) { toast(String(e)) }
-          }}
-        />
-      ) : !account.loggedIn ? (
-        <form
-          className="cred-form"
-          onSubmit={async (e) => {
-            e.preventDefault()
-            setBusy(true)
-            try {
-              await api.qobuzLogin(email, password)
-              setPassword('')
-              toast('Logged in to Qobuz')
-              onChange()
-            } catch (err) {
-              toast(String(err))
-            } finally {
-              setBusy(false)
-            }
-          }}
-        >
-          <label><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" /></label>
-          <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
-          <button type="submit" className="primary" disabled={busy || !email || !password}>{busy ? 'Logging in…' : 'Log in'}</button>
-          <div className="muted small">Your password is sent only to Qobuz; the app keeps just the login token, encrypted for your Windows account.</div>
-        </form>
+      {!account.loggedIn ? (
+        <div className="cred-form">
+          <button type="button" className="primary" disabled={busy} onClick={browserLogin}>{busy ? 'Waiting for Qobuz…' : 'Connect Qobuz'}</button>
+          <div className="muted small">Sign in on Qobuz in the secure in-app window. Your Qobuz password is never entered into HiFi Player.</div>
+          <details>
+            <summary className="muted small">Use email and password instead</summary>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              setBusy(true)
+              try {
+                await api.qobuzLogin(email, password)
+                setPassword('')
+                toast('Logged in to Qobuz')
+                onChange()
+              } catch (err) { toast(String(err)) } finally { setBusy(false) }
+            }}>
+              <label><span>Email</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" /></label>
+              <label><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" /></label>
+              <button type="submit" disabled={busy || !email || !password}>Log in</button>
+            </form>
+          </details>
+        </div>
       ) : null}
-      {account.configured && !editCreds && (
-        <button className="link-btn small" onClick={() => setEditCreds(true)}>Change API credentials</button>
-      )}
     </div>
   )
 }
