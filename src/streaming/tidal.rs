@@ -173,6 +173,17 @@ impl Tidal {
     }
 
     fn get(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<Value> {
+        match self.get_once(endpoint, params) {
+            // Tidal can reject a token before its stated expiry: refresh once and retry.
+            Err(e) if e.downcast_ref::<super::HttpError>().is_some_and(|h| h.status == 401) => {
+                Secrets::set("tidal.expires", None)?;
+                self.get_once(endpoint, params)
+            }
+            r => r,
+        }
+    }
+
+    fn get_once(&self, endpoint: &str, params: &[(&str, &str)]) -> Result<Value> {
         let token = self.token()?;
         let country = Secrets::get("tidal.country").unwrap_or_else(|| "US".into());
         let mut req = self
@@ -223,6 +234,8 @@ impl Tidal {
             StreamQuality::Lossy => &["HIGH"],
         };
         let mut last_err = anyhow!("no stream available");
+        // A lossy answer to a lossless request: used only if no level gives FLAC.
+        let mut lossy: Option<ResolvedStream> = None;
         for level in levels {
             let v = match self.get(
                 &format!("tracks/{id}/playbackinfopostpaywall"),
@@ -247,11 +260,24 @@ impl Tidal {
             let mime = s(&v, "manifestMimeType").unwrap_or_default();
             if mime.contains("dash") {
                 match parse_dash(&manifest) {
-                    Ok(urls) => return Ok(ResolvedStream { urls, ext: "mp4".into(), label: format!("Tidal FLAC {q}") }),
+                    Ok(urls) => {
+                        return Ok(ResolvedStream {
+                            urls,
+                            ext: "mp4".into(),
+                            label: format!("Tidal FLAC {q}"),
+                            duration: dash_duration(&manifest),
+                        });
+                    }
                     Err(e) => last_err = e,
                 }
             } else {
                 let m: Value = serde_json::from_str(&manifest).context("bad Tidal manifest")?;
+                // Encrypted (DRM) streams are not decoded; only plain FLAC/AAC plays.
+                if let Some(enc) = s(&m, "encryptionType")
+                    && enc != "NONE"
+                {
+                    bail!("Tidal sent an encrypted stream for this track, which HiFi Player can't play");
+                }
                 let urls: Vec<String> =
                     m["urls"].as_array().into_iter().flatten().filter_map(|u| u.as_str().map(str::to_string)).collect();
                 let codec = s(&m, "codecs").unwrap_or_default().to_lowercase();
@@ -261,11 +287,17 @@ impl Tidal {
                     ("mp4", "Tidal AAC 320".to_string())
                 };
                 if !urls.is_empty() {
-                    return Ok(ResolvedStream { urls: urls[..1].to_vec(), ext: ext.into(), label });
+                    let stream = ResolvedStream { urls: urls[..1].to_vec(), ext: ext.into(), label, duration: None };
+                    // Tidal can answer a hi-res request for a CD-quality track with AAC;
+                    // ask for the next level (LOSSLESS) before settling for it.
+                    if ext == "flac" || *level == "HIGH" {
+                        return Ok(stream);
+                    }
+                    lossy.get_or_insert(stream);
                 }
             }
         }
-        Err(last_err)
+        lossy.ok_or(last_err)
     }
 }
 
@@ -295,6 +327,27 @@ fn parse_dash(mpd: &str) -> Result<Vec<String>> {
     let mut urls = vec![init];
     urls.extend((start..start + count).map(|n| media.replace("$Number$", &n.to_string())));
     Ok(urls)
+}
+
+/// Length from the MPD's mediaPresentationDuration, e.g. "PT3M45.123S".
+fn dash_duration(mpd: &str) -> Option<f64> {
+    let start = mpd.find("mediaPresentationDuration=\"")? + 27;
+    let iso = mpd[start..].split('"').next()?.strip_prefix("PT")?;
+    let mut secs = 0.0;
+    let mut num = String::new();
+    for c in iso.chars() {
+        match c {
+            'H' => secs += num.parse::<f64>().ok()? * 3600.0,
+            'M' => secs += num.parse::<f64>().ok()? * 60.0,
+            'S' => secs += num.parse::<f64>().ok()?,
+            _ => {
+                num.push(c);
+                continue;
+            }
+        }
+        num.clear();
+    }
+    Some(secs)
 }
 
 fn items(v: &Value) -> Vec<Value> {
@@ -338,7 +391,7 @@ fn track_from(t: &Value) -> StreamTrack {
             Some(ver) if !ver.is_empty() => format!("{} ({ver})", s(t, "title").unwrap_or_default()),
             _ => s(t, "title").unwrap_or_default(),
         },
-        artist: s(&t["artist"], "name").unwrap_or_default(),
+        artist: s(&t["artist"], "name").or_else(|| s(&t["artists"][0], "name")).unwrap_or_default(),
         album: s(&t["album"], "title"),
         album_id: s(&t["album"], "id"),
         cover: image(s(&t["album"], "cover"), 640),
@@ -373,6 +426,12 @@ mod tests {
         assert_eq!(urls[0], "https://x/init.mp4?a=1&b=2");
         assert_eq!(urls.len(), 1 + 4);
         assert_eq!(urls[4], "https://x/4.mp4");
+    }
+
+    #[test]
+    fn dash_length() {
+        assert_eq!(dash_duration(r#"<MPD mediaPresentationDuration="PT1H3M45.5S">"#), Some(3825.5));
+        assert_eq!(dash_duration(r#"<MPD mediaPresentationDuration="PT58.2S">"#), Some(58.2));
     }
 
     #[test]

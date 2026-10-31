@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, clock, streamItems, type StreamAlbum } from '../api'
+import { api, clock, streamItems, type SearchResults, type StreamAlbum } from '../api'
 import { AlbumGrid } from '../components/AlbumGrid'
 import { Cover, ErrorBox, Icon, Loading, QualityBadge, useLoad } from '../components/common'
 import { TrackList } from '../components/TrackList'
@@ -13,6 +13,64 @@ const toGrid = (albums: StreamAlbum[]) =>
 async function playStreamAlbum(service: string, id: string, mode: 'replace' | 'next' | 'append' = 'replace') {
   const { tracks } = await api.streamAlbum(service, id)
   await api.playItems(streamItems(tracks), 0, mode)
+}
+
+/** Search results from a streaming service: songs first (up to 25), then artists and albums. */
+export function StreamResults({ service, results }: { service: string; results: SearchResults }) {
+  const { go, toast } = useNav()
+  const tracks = results.tracks.slice(0, 25)
+  if (!tracks.length && !results.albums.length && !results.artists.length)
+    return <div className="empty">Nothing found on {label(service)}.</div>
+  return (
+    <>
+      {tracks.length > 0 && (
+        <>
+          <h2>Songs</h2>
+          <div className="muted small">Click a song to play it; use ⋯ for Play next or Add to queue.</div>
+          <TrackList
+            rows={tracks.map((t) => ({
+              key: t.id,
+              title: t.title,
+              artist: [t.artist, t.album].filter(Boolean).join(' — '),
+              duration: t.duration,
+              quality: t.quality,
+              disabled: !t.streamable,
+            }))}
+            items={streamItems(tracks)}
+            showArtist
+            play={(its, start, mode) =>
+              api
+                .playItems(its, start, mode)
+                .then(() => mode === 'next' ? toast('Playing next') : mode === 'append' ? toast('Added to queue') : undefined)
+                .catch((e) => toast(String(e)))
+            }
+          />
+        </>
+      )}
+      {results.artists.length > 0 && (
+        <>
+          <h2>Artists</h2>
+          <div className="chips">
+            {results.artists.slice(0, 12).map((a) => (
+              <button key={a.id} className="chip" onClick={() => go({ name: 'streamArtist', service, id: a.id })}>
+                {a.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {results.albums.length > 0 && (
+        <>
+          <h2>Albums</h2>
+          <AlbumGrid
+            albums={toGrid(results.albums)}
+            onOpen={(k) => go({ name: 'streamAlbum', service, id: k })}
+            onPlay={(k) => playStreamAlbum(service, k).catch((e) => toast(String(e)))}
+          />
+        </>
+      )}
+    </>
+  )
 }
 
 export function ServicePage({ service }: { service: 'qobuz' | 'tidal' }) {
@@ -74,36 +132,7 @@ export function ServicePage({ service }: { service: 'qobuz' | 'tidal' }) {
         ) : !results ? (
           <Loading what="Searching" />
         ) : (
-          <>
-            {results.artists.length > 0 && (
-              <>
-                <h2>Artists</h2>
-                <div className="chips">
-                  {results.artists.slice(0, 12).map((a) => (
-                    <button key={a.id} className="chip" onClick={() => go({ name: 'streamArtist', service, id: a.id })}>
-                      {a.name}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            <h2>Albums</h2>
-            <AlbumGrid albums={toGrid(results.albums)} onOpen={openAlbum} onPlay={play} />
-            <h2>Tracks</h2>
-            <TrackList
-              rows={results.tracks.map((t) => ({
-                key: t.id,
-                title: t.title,
-                artist: [t.artist, t.album].filter(Boolean).join(' — '),
-                duration: t.duration,
-                quality: t.quality,
-                disabled: !t.streamable,
-              }))}
-              items={streamItems(results.tracks)}
-              showArtist
-              play={(its, start, mode) => api.playItems(its, start, mode).catch((e) => toast(String(e)))}
-            />
-          </>
+          <StreamResults service={service} results={results} />
         )
       ) : (
         <>

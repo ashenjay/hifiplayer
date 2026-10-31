@@ -108,6 +108,13 @@ impl PcmSource {
         SourceFormat::Pcm { rate: self.rate, channels: self.channels, bits: self.bits }
     }
 
+    /// Use `secs` as the length when the container doesn't say (fragmented MP4).
+    pub fn set_duration_if_unknown(&mut self, secs: f64) {
+        if self.total_frames.unwrap_or(0) == 0 && secs > 0.0 {
+            self.total_frames = Some((secs * self.rate as f64) as u64);
+        }
+    }
+
     pub fn duration_secs(&self) -> Option<f64> {
         self.total_frames.map(|f| f as f64 / self.rate as f64)
     }

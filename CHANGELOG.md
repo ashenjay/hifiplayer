@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-10-31
+
+### Fixed
+- Tidal and Qobuz: hi-res streams no longer stutter. The whole track now downloads ahead of playback (Tidal's hi-res segments four at a time), so network waits never reach the audio.
+- Tidal and Qobuz: the seek bar works. Tidal hi-res tracks now show their length, and seeking reuses the audio already downloaded instead of starting over.
+- Tidal: a login token that Tidal rejects before its stated expiry is renewed automatically, instead of failing with "Invalid access token".
+- Tidal: CD-quality tracks ask for FLAC before accepting AAC. Search results show the artist name.
+- Qobuz: a failed login shows Qobuz's own reason instead of "login expired".
+
+### Added
+- Search has Library, Tidal and Qobuz tabs (for the services you are logged in to). Streaming results list 25 songs first, with Play next and Add to queue. Searching from a Tidal or Qobuz page opens that service's tab.
+- A clear message when a streaming service sends an encrypted (DRM) stream, which HiFi Player doesn't play.
+
 ## [1.3.3] - 2026-10-29
 
 ### Fixed

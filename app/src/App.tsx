@@ -241,11 +241,20 @@ export default function App() {
               className="search"
               onSubmit={(e) => {
                 e.preventDefault()
-                if (query.trim()) go({ name: 'search', query: query.trim() })
+                if (!query.trim()) return
+                // Searching from a Tidal/Qobuz page opens that service's results tab.
+                if (view.name === 'service' || view.name === 'streamAlbum' || view.name === 'streamArtist') {
+                  try {
+                    localStorage.setItem('search.tab', view.service)
+                  } catch {
+                    /* storage unavailable */
+                  }
+                }
+                go({ name: 'search', query: query.trim() })
               }}
             >
               {Icon.search}
-              <input placeholder="Search your library" value={query} onChange={(e) => setQuery(e.target.value)} />
+              <input placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
             </form>
           </header>
           <main ref={mainRef} className="content">

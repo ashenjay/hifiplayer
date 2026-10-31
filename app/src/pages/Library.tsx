@@ -7,6 +7,7 @@ import { TrackList } from '../components/TrackList'
 import { useNav } from '../nav'
 import { AlbumAnalysis, AlbumTools } from './AlbumTools'
 import { albumGrid, trackQueueItems, trackRows } from './Collection'
+import { StreamResults } from './Streaming'
 import { coverTint, useCoverColors } from '../theme'
 
 type Sort = 'artist' | 'title' | 'year' | 'recent'
@@ -283,16 +284,61 @@ export function ArtistPage({ artist }: { artist: string }) {
 }
 
 export function SearchPage({ query }: { query: string }) {
+  const [status] = useLoad(() => api.servicesStatus().catch(() => []), [])
+  const services = (status ?? []).filter((s) => s.loggedIn).map((s) => s.service)
+  const [tab, setTab] = useState<string>(() => {
+    try {
+      return localStorage.getItem('search.tab') ?? 'library'
+    } catch {
+      return 'library'
+    }
+  })
+  const pick = (t: string) => {
+    setTab(t)
+    try {
+      localStorage.setItem('search.tab', t)
+    } catch {
+      /* storage unavailable */
+    }
+  }
+  const shown = (services as string[]).includes(tab) ? tab : 'library'
+  if (!query) return <div className="empty">Type in the search box to find artists, albums and tracks.</div>
+  return (
+    <div>
+      <div className="page-head">
+        <h1>Results for “{query}”</h1>
+        {services.length > 0 && (
+          <div className="segmented">
+            <button className={shown === 'library' ? 'on' : ''} onClick={() => pick('library')}>Library</button>
+            {services.map((s) => (
+              <button key={s} className={shown === s ? 'on' : ''} onClick={() => pick(s)}>
+                {s === 'qobuz' ? 'Qobuz' : 'Tidal'}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {shown === 'library' ? <LibraryResults query={query} /> : <ServiceSearch service={shown} query={query} />}
+    </div>
+  )
+}
+
+function ServiceSearch({ service, query }: { service: string; query: string }) {
+  const [res, error] = useLoad(() => api.streamSearch(service, query), [service, query])
+  if (error) return <ErrorBox error={error} />
+  if (!res) return <Loading what="Searching" />
+  return <StreamResults service={service} results={res} />
+}
+
+function LibraryResults({ query }: { query: string }) {
   const { go, toast } = useNav()
   const [res, error] = useLoad(() => api.search(query), [query])
-  if (!query) return <div className="empty">Type in the search box to find artists, albums and tracks.</div>
   if (error) return <ErrorBox error={error} />
   if (!res) return <Loading what="Searching" />
   const nothing = !res.artists.length && !res.albums.length && !res.tracks.length && !res.composers.length
   return (
     <div>
-      <div className="page-head"><h1>Results for “{query}”</h1></div>
-      {nothing && <div className="empty">Nothing matches “{query}”.</div>}
+      {nothing && <div className="empty">Nothing in your library matches “{query}”.</div>}
       {(res.artists.length > 0 || res.composers.length > 0) && (
         <>
           <h2>Artists</h2>
