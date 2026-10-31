@@ -2,6 +2,7 @@
 
 pub mod dsdfile;
 pub mod http;
+mod prefetch;
 pub mod pcm;
 pub mod radio;
 pub mod sacd;
@@ -47,6 +48,8 @@ pub struct ResolvedStream {
     pub ext: String,
     /// Shown in the signal path, e.g. "Qobuz FLAC 24/192".
     pub label: String,
+    /// Track length, for formats that don't carry it (DASH segments).
+    pub duration: Option<f64>,
 }
 
 /// Implemented by the streaming services module; looked up when a stream starts.
@@ -140,11 +143,25 @@ impl Source {
         match media {
             Media::File { path, .. } => Self::open(path),
             Media::Stream { service, id } => {
-                let resolver = RESOLVER.read().unwrap().clone().ok_or_else(|| anyhow!("streaming is not set up"))?;
-                let stream = resolver.resolve(service, id)?;
-                let http = http::HttpSource::new(stream.urls)?;
-                let mut src = pcm::PcmSource::from_source(Box::new(http), &stream.ext)?;
-                src.codec_name = stream.label;
+                let key = format!("{service}:{id}");
+                let (data, ext, label, duration) = match prefetch::cached(&key) {
+                    Some(c) => c,
+                    None => {
+                        let resolver =
+                            RESOLVER.read().unwrap().clone().ok_or_else(|| anyhow!("streaming is not set up"))?;
+                        let stream = resolver.resolve(service, id)?;
+                        let data = prefetch::PrefetchSource::new(stream.urls)?;
+                        prefetch::remember(&key, &data, &stream.ext, &stream.label, stream.duration);
+                        (data, stream.ext, stream.label, stream.duration)
+                    }
+                };
+                let opened = data.opened_flag();
+                let mut src = pcm::PcmSource::from_source(Box::new(data), &ext)?;
+                opened.set();
+                src.codec_name = label;
+                if let Some(d) = duration {
+                    src.set_duration_if_unknown(d);
+                }
                 Ok(Source::Pcm(src))
             }
             Media::Spotify => Ok(Source::Live(crate::spotify::LiveSource::open()?)),

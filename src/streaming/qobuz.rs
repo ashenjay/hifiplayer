@@ -57,7 +57,13 @@ impl Qobuz {
             req = req.query(*k, *v);
         }
         json(req.call()).map_err(|e| match e.downcast_ref::<super::HttpError>() {
-            Some(h) if h.status == 401 => anyhow!("Qobuz login expired, please log in again"),
+            // Only a request made with a login token can mean the login expired.
+            Some(h) if h.status == 401 && auth => anyhow!("Qobuz login expired, please log in again"),
+            // Otherwise show Qobuz's own reason (e.g. wrong password, app ID not accepted).
+            Some(h) => match h.body["message"].as_str() {
+                Some(msg) if !msg.is_empty() => anyhow!("Qobuz: {msg} (HTTP {})", h.status),
+                _ => e,
+            },
             _ => e,
         })
     }
@@ -145,7 +151,7 @@ impl Qobuz {
                         Some(q) if ext == "flac" => format!("Qobuz FLAC {q}"),
                         _ => "Qobuz MP3 320".into(),
                     };
-                    return Ok(ResolvedStream { urls: vec![url], ext: ext.into(), label });
+                    return Ok(ResolvedStream { urls: vec![url], ext: ext.into(), label, duration: None });
                 }
                 Err(e) => last_err = e,
             }
